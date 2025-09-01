@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from tqdm import tqdm
+from src.tools.device import pick_device
 
 import sys
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -17,8 +18,23 @@ def save_grid(x, path):
     x = (x.clamp(-1,1) + 1) * 0.5
     tv.utils.save_image(x, path, nrow=4)
 
+def sample_batch(model, scheduler, cond, steps, device):
+    model.eval()
+    with torch.no_grad():
+        # Configurar timesteps de muestreo (p.ej., 50)
+        scheduler.set_timesteps(steps, device=device)
+        b, c, h, w = cond.shape
+        x = torch.randn((b, 3, h, w), device=device)
+        for t in scheduler.timesteps:
+            # Predicción de ruido ε
+            eps = model(x, t, cond)
+            # Un paso de denoise
+            out = scheduler.step(model_output=eps, timestep=t, sample=x)
+            x = out.prev_sample
+        return x
 
 def main():
+    print(">> START train")  # debug mínimo
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--data_root", type=str, required=True)
@@ -31,7 +47,8 @@ def main():
     p.add_argument("--gray_sketch", action="store_true")
     args = p.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = pick_device()
+    print("Using device:", device)
     os.makedirs(args.out, exist_ok=True)
 
     # loaders
@@ -77,24 +94,36 @@ def main():
             pbar.update(1)
 
             if step % args.save_every == 0:
-                # muestra rápido 1 batch del val con DDPM 50 pasos
                 model.eval()
                 with torch.no_grad():
+                    # intenta obtener un batch de val; si no hay, usa train
                     try:
                         vb = next(iter(val_loader))
-                    except StopIteration:
-                        vb = next(iter(val_loader))
+                    except Exception:
+                        vb = next(iter(train_loader))
                     skv = vb["sketch"].to(device)
                     if args.gray_sketch and skv.shape[1] == 3:
                         skv = skv.mean(dim=1, keepdim=True)
+
                     imgs = sample_batch(model, scheduler, skv[:8], steps=50, device=device)
                     save_grid(imgs, Path(args.out)/f"sample_step{step}.png")
+
+                # guarda checkpoint intermedio
+                ckpt_dir = Path(args.out) / "checkpoints"
+                ckpt_dir.mkdir(parents=True, exist_ok=True)
+                torch.save({"model": model.state_dict(),
+                            "size": args.size,
+                            "in_ch": in_ch,
+                            "step": step},
+                           ckpt_dir / f"step_{step:06d}.pt")
+
                 model.train()
 
             if step >= args.steps:
                 break
-
-
     # guarda pesos y config mínima
     torch.save({"model": model.state_dict(), "size": args.size, "in_ch": in_ch}, Path(args.out)/"ckpt.pt")
     print(f"[OK] Entrenamiento terminado. Checkpoints en {args.out}")
+
+if __name__ == "__main__":
+    main()

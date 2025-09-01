@@ -17,8 +17,8 @@ class CondUNet(nn.Module):
         )
 
 
-def forward(self, x_t, t, sketch):
-    # si el sketch tiene 1 canal: concat → [B, 3+1, H, W]
-    # si tiene 3 canales: concat → [B, 3+3, H, W] (ajusta in_channels_total)
-    x = torch.cat([x_t, sketch], dim=1)
-    return self.unet(x, t).sample # predicción de ε
+    def forward(self, x_t, t, sketch):
+        # si el sketch tiene 1 canal: concat → [B, 3+1, H, W]
+        # si tiene 3 canales: concat → [B, 3+3, H, W] (ajusta in_channels_total)
+        x = torch.cat([x_t, sketch], dim=1)
+        return self.unet(x, t).sample # predicción de ε
