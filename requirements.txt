@@ -1,0 +1,24 @@
+# requirements_min.txt
+# Uso: pip install -r requirements_min.txt
+# Nota: ajusta torch/torchvision a tu versión de CUDA
+
+# PyTorch core (elige la versión correcta según tu GPU/CUDA)
+torch
+# Librerías visuales para datasets y utilidades
+torchvision
+
+# Hugging Face Diffusers (para UNet y Schedulers)
+diffusers>=0.33,<0.35
+
+# Utilidades básicas
+pillow
+numpy
+tqdm
+
+# Para guardar/mostrar imágenes
+matplotlib  # opcional, útil para debug de histogramas
+
+# (Opcional) métricas perceptuales — instálalo más adelante si quieres FID/LPIPS
+# torch-fidelity
+# lpips
+# scikit-image
