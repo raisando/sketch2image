@@ -23,7 +23,7 @@ class PairedPix2PixDataset(Dataset):
         self.size = size
         self.to_gray_sketch = to_gray_sketch
 
-        base = [T.Resize((size, size))]
+        base = [T.Resize((size, size * 2))]
 
         # Importante: aplicamos augmentations a la imagen completa *antes* de separar
         if aug:
@@ -56,8 +56,10 @@ class PairedPix2PixDataset(Dataset):
             # convertir a luminancia y repetir a 3 canales
             # weights de RGB (ITU-R BT.601): 0.2989, 0.5870, 0.1140
             r, g, b = sketch[0:1], sketch[1:2], sketch[2:3]
+            # after (true 1-channel for --gray_sketch=True)
             gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
-            sketch = gray.repeat(3, 1, 1)
+            sketch = gray  # [1, H, W]
+
 
         # 4) normalizar a [-1, 1]
         sketch = sketch * 2.0 - 1.0
