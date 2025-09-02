@@ -21,4 +21,6 @@ class CondUNet(nn.Module):
         # si el sketch tiene 1 canal: concat → [B, 3+1, H, W]
         # si tiene 3 canales: concat → [B, 3+3, H, W] (ajusta in_channels_total)
         x = torch.cat([x_t, sketch], dim=1)
+        assert x.shape[1] == self.unet.config.in_channels, f"{x.shape[1]=} vs {self.unet.config.in_channels=}"
+
         return self.unet(x, t).sample # predicción de ε

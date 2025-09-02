@@ -1,7 +1,44 @@
 import os
+
+# Disable SDPA kernels so diffusers won't hit the MPS path that crashes
+os.environ.setdefault("PYTORCH_ENABLE_FLASH_SDP", "0")
+os.environ.setdefault("PYTORCH_ENABLE_MEM_EFFICIENT_SDP", "0")
+os.environ.setdefault("PYTORCH_ENABLE_MATH_SDP", "1")
+# Let PyTorch bounce specific ops to CPU if necessary on Apple GPU
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 from pathlib import Path
 import torch
 import torch.nn.functional as F
+
+# ---- Safe attention for MPS (avoid SDPA kernel) ----
+if torch.backends.mps.is_available():
+    def _sdpa_safe(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
+        # q,k,v: (..., L, d), (..., S, d), (..., S, d)
+        d = q.shape[-1]
+        if scale is None:
+            scale = 1.0 / (d ** 0.5)
+        # matmul attention (float32 for stability)
+        qf = q.float()
+        kf = k.float()
+        vf = v.float()
+        attn = (qf @ kf.transpose(-2, -1)) * scale
+        if is_causal:
+            L, S = attn.shape[-2], attn.shape[-1]
+            causal = torch.ones((L, S), device=attn.device, dtype=torch.bool).triu(1)
+            attn = attn.masked_fill(causal, float('-inf'))
+        if attn_mask is not None:
+            attn = attn + attn_mask
+        attn = torch.softmax(attn, dim=-1)
+        # (optional) dropout on attn in training; skipped for simplicity
+        out = attn @ vf
+        # cast back
+        return out.to(q.dtype)
+
+    F.scaled_dot_product_attention = _sdpa_safe
+# -----------------------------------------------------
+
+
 from torch.optim import AdamW
 from tqdm import tqdm
 from src.tools.device import pick_device
@@ -56,9 +93,22 @@ def main():
         data_root=args.data_root, size=args.size, batch_size=args.batch, num_workers=4, aug=True, gray_sketch=args.gray_sketch
     )
 
-    # modelo (in_channels: 3 + (1 si gray_sketch else 3))
+   # modelo (in_channels: 3 + (1 si gray_sketch else 3))
     in_ch = 3 + (1 if args.gray_sketch else 3)
     model = CondUNet(in_channels_total=in_ch, out_channels=3, sample_size=args.size).to(device)
+    print("UNet in_channels:", getattr(getattr(model, "unet", None), "config", {}).in_channels)
+
+    # 🔧 MPS attention workaround (newer diffusers) + fallback for older versions
+    try:
+        from diffusers.models.attention_processor import AttnProcessor
+        if hasattr(model, "unet") and hasattr(model.unet, "set_attn_processor"):
+            model.unet.set_attn_processor(AttnProcessor())
+            print("[info] Using AttnProcessor() (SDPA disabled inside diffusers UNet)")
+        else:
+            print("[warn] UNet.set_attn_processor not found; relying on global SDPA disable env vars.")
+    except Exception as e:
+        print("[warn] Could not set AttnProcessor:", e)
+        print("[warn] Relying on global SDPA disable env vars.")
 
     # scheduler DDPM (cosine)
     scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="squaredcos_cap_v2")
@@ -79,10 +129,19 @@ def main():
 
             bsz = x0.size(0)
             t = torch.randint(0, scheduler.config.num_train_timesteps, (bsz,), device=device)
+
             noise = torch.randn_like(x0)
             x_t = scheduler.add_noise(x0, noise, t)
 
-            eps_pred = model(x_t, t, sk)
+            print("x_t:", tuple(x_t.shape), x_t.dtype, x_t.device)
+            print("sk :", tuple(sk.shape),  sk.dtype,  sk.device)
+            print("t  :", tuple(t.shape),   t.dtype,   t.device)
+
+            t = t.to(x_t.device)
+            # Some setups prefer float timesteps; this avoids SDPA dtype quirks
+            t_for_unet = t.to(dtype=x_t.dtype)
+
+            eps_pred = model(x_t, t_for_unet, sk)
             loss = F.mse_loss(eps_pred, noise)
 
             opt.zero_grad(set_to_none=True)
