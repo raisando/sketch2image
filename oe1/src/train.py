@@ -1,9 +1,7 @@
 import os
-# Disable SDPA kernels so diffusers won't hit the MPS path that crashes
 os.environ.setdefault("PYTORCH_ENABLE_FLASH_SDP", "0")
 os.environ.setdefault("PYTORCH_ENABLE_MEM_EFFICIENT_SDP", "0")
 os.environ.setdefault("PYTORCH_ENABLE_MATH_SDP", "1")
-# Let PyTorch bounce specific ops to CPU if necessary on Apple GPU
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 from pathlib import Path
 import torch
@@ -13,11 +11,9 @@ torch.backends.cudnn.benchmark = True
 # ---- Safe attention for MPS (avoid SDPA kernel) ----
 if torch.backends.mps.is_available():
     def _sdpa_safe(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
-        # q,k,v: (..., L, d), (..., S, d), (..., S, d)
         d = q.shape[-1]
         if scale is None:
             scale = 1.0 / (d ** 0.5)
-        # matmul attention (float32 for stability)
         qf = q.float()
         kf = k.float()
         vf = v.float()
@@ -29,13 +25,12 @@ if torch.backends.mps.is_available():
         if attn_mask is not None:
             attn = attn + attn_mask
         attn = torch.softmax(attn, dim=-1)
-        # (optional) dropout on attn in training; skipped for simplicity
         out = attn @ vf
-        # cast back
         return out.to(q.dtype)
-
     F.scaled_dot_product_attention = _sdpa_safe
-# -----------------------------------------------------
+# ---------------------------------------------------
+
+
 from torch.optim import AdamW
 from tqdm import tqdm
 from src.tools.device import pick_device
@@ -50,7 +45,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 def main():
-    print(">> START train")  # debug mínimo
+    print(">> START train")
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--data_root", type=str, required=True)
@@ -61,15 +56,15 @@ def main():
     p.add_argument("--save_every", type=int, default=200)
     p.add_argument("--out", type=str, default="runs/min_ddpm")
     p.add_argument("--gray_sketch", action="store_true")
-    p.add_argument("--epochs", type=int, default=None)           # optional, converts to steps
-    p.add_argument("--eval_every", type=int, default=500)        # how often to run val
-    p.add_argument("--patience", type=int, default=5)            # early-stopping patience (eval windows)
-    p.add_argument("--min_delta", type=float, default=1e-4)      # required improvement to reset patience
+    p.add_argument("--epochs", type=int, default=None)
+    p.add_argument("--eval_every", type=int, default=500)
+    p.add_argument("--patience", type=int, default=5)
+    p.add_argument("--min_delta", type=float, default=1e-4)
 
     args = p.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    writer = SummaryWriter(log_dir=args.out)   # logs go in your run folder
+    writer = SummaryWriter(log_dir=args.out)
 
     device = pick_device()
     print("Using device:", device)
@@ -85,7 +80,7 @@ def main():
     model = CondUNet(in_channels_total=in_ch, out_channels=3, sample_size=args.size).to(device)
     print("UNet in_channels:", getattr(getattr(model, "unet", None), "config", {}).in_channels)
 
-    # 🔧 MPS attention workaround (newer diffusers) + fallback for older versiones
+    # Apple M2
     try:
         from diffusers.models.attention_processor import AttnProcessor
         if hasattr(model, "unet") and hasattr(model.unet, "set_attn_processor"):
@@ -104,12 +99,13 @@ def main():
 
     step = 0
     model.train()
-    pbar = tqdm(total=args.steps, desc="train")
 
     batches_per_epoch = (len(train_loader.dataset) + args.batch - 1) // args.batch
     if args.epochs is not None:
         args.steps = args.epochs * batches_per_epoch
     print(f"[info] steps={args.steps} (~{batches_per_epoch} batches/epoch)")
+
+    pbar = tqdm(total=args.steps, desc="train")
 
     best_val = float("inf")
     since_improve = 0
@@ -153,7 +149,6 @@ def main():
             if step % args.save_every == 0:
                 model.eval()
                 with torch.no_grad():
-                    # intenta obtener un batch de val; si no hay, usa train
                     try:
                         vb = next(iter(val_loader))
                     except Exception:
@@ -165,7 +160,6 @@ def main():
                     imgs = sample_batch(model, scheduler, skv[:8], steps=50, device=device)
                     save_grid(imgs, Path(args.out)/f"sample_step{step}.png")
 
-                # guarda checkpoint intermedio
                 ckpt_dir = Path(args.out) / "checkpoints"
                 ckpt_dir.mkdir(parents=True, exist_ok=True)
                 torch.save({"model": model.state_dict(),
@@ -194,7 +188,6 @@ def main():
                                 "step": step,
                                 "val_loss": val_loss},
                             ckpt_dir / "best.pt")
-                    # print or pbar.write so tqdm isn’t broken:
                     pbar.write(f"[best] step={step} val={val_loss:.4f}")
                 else:
                     since_improve += 1
@@ -203,16 +196,11 @@ def main():
                 # Early stop?
                 if since_improve >= args.patience:
                     pbar.write(f"[early-stop] no improvement in {args.patience} evals (best={best_val:.4f}).")
-                    # Optionally load best back to RAM before exiting:
-                    # state = torch.load(ckpt_dir / "best.pt", map_location=device)
-                    # model.load_state_dict(state["model"])
-                    # break both loops:
-                    step = args.steps  # force outer condition to stop
+                    step = args.steps
                     break
 
             if step >= args.steps:
                 break
-    # guarda pesos y config mínima
     torch.save({"model": model.state_dict(), "size": args.size, "in_ch": in_ch}, Path(args.out)/"ckpt.pt")
     print(f"[OK] Entrenamiento terminado. Checkpoints en {args.out}")
 
