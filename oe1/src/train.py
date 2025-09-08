@@ -41,6 +41,7 @@ from src.datasets.paired_pix2pix import make_loaders
 from src.model.cond_unet import CondUNet
 from src.utils import save_grid, sample_batch, eval_val_loss
 from torch.utils.tensorboard import SummaryWriter
+from torch.amp import autocast, GradScaler
 
 
 
@@ -110,6 +111,8 @@ def main():
     best_val = float("inf")
     since_improve = 0
 
+    scaler = GradScaler()
+
     while step < args.steps:
         for batch in train_loader:
             x0 = batch["photo"].to(device)
@@ -133,12 +136,22 @@ def main():
             # Some setups prefer float timesteps; this avoids SDPA dtype quirks
             t_for_unet = t.to(dtype=x_t.dtype)
 
+            #NVIDIA GPU ---
+            with autocast(dtype=torch.float16):
+                    eps_pred = model(x_t, t_for_unet, sk)
+                    loss = F.mse_loss(eps_pred, noise)
+            opt.zero_grad(set_to_none=True)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+
+            ''' -- Regular Training
             eps_pred = model(x_t, t_for_unet, sk)
             loss = F.mse_loss(eps_pred, noise)
-
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
+            '''
 
             step += 1
             writer.add_scalar("train/loss", loss.item(), step)  # 👈 here
@@ -202,6 +215,7 @@ def main():
             if step >= args.steps:
                 break
     torch.save({"model": model.state_dict(), "size": args.size, "in_ch": in_ch}, Path(args.out)/"ckpt.pt")
+    writer.close()
     print(f"[OK] Entrenamiento terminado. Checkpoints en {args.out}")
 
 if __name__ == "__main__":
