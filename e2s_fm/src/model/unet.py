@@ -249,8 +249,8 @@ class FMUNet(nn.Module):
     def forward(self, x: torch.Tensor, t: torch.Tensor, y: torch.Tensor):
         """
         x: (bs, C_in, H, W)
-        t: (bs, 1, 1, 1)   (o (bs,) y lo expandes fuera)
-        y: (bs,)  (clase); en unconditional será todo cero
+        t: (bs, 1, 1, 1)
+        y: (bs,)  (clase); uncond -> zeros
         """
         t_embed = self.time_embedder(t)   # (bs, t_embed_dim)
         y_embed = self.y_embedder(y)      # (bs, y_embed_dim)
