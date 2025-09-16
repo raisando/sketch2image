@@ -110,8 +110,16 @@ class ImageCFMTrainer(Trainer):
                 print("[warn] EMA disabled:", e)
                 self.ema_model = None
 
+    def _one_batch_loss(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        """
+        Muestrea 'batch_size' imágenes z ~ p_data (que puede ser train/val/test)
+        y calcula la pérdida con _loss_from_batch.
+        """
+        z = self.path.p_data.sample(batch_size)   # [B,C,H,W] en [-1,1]
+        return self._loss_from_batch(z, device)
+
     def get_train_loss(self, **kwargs) -> torch.Tensor:
-        # ya no se usa (satisface abstracto)
+        # ya no se usa (solo satisface el abstracto de Trainer)
         raise NotImplementedError
 
     def _loss_from_batch(self, z: torch.Tensor, device: torch.device) -> torch.Tensor:
@@ -143,7 +151,7 @@ class ImageCFMTrainer(Trainer):
                 pe.data.mul_(self.ema_decay).add_(p.data, alpha=1.0 - self.ema_decay)
 
     def train(self, num_epochs: int, device: torch.device, lr: float = 1e-3,
-              train_loader=None, val_loader=None):
+                train_loader=None, val_loader=None):
         assert train_loader is not None, "train_loader es requerido"
         self.model.to(device)
         if self.ema_model is not None:
@@ -160,7 +168,11 @@ class ImageCFMTrainer(Trainer):
             return 0.5 * (1 + math.cos(math.pi * prog))
         sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
 
-        scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp and torch.cuda.is_available())
+        # AMP (PyTorch 2.5+): GradScaler solo para CUDA; autocast para CUDA/MPS
+        is_cuda = (device.type == "cuda")
+        is_mps  = (device.type == "mps")
+        amp_enabled = self.use_amp and (is_cuda or is_mps)
+        scaler = torch.amp.GradScaler(device="cuda") if (is_cuda and amp_enabled) else None
 
         history = {"train": [], "val": []}
         for epoch in tqdm(range(num_epochs), desc="train", leave=False, dynamic_ncols=True):
@@ -170,15 +182,29 @@ class ImageCFMTrainer(Trainer):
             for batch in train_loader:
                 x = batch["x"]  # RightHalfImages debe exponer "x"
                 opt.zero_grad(set_to_none=True)
-                with torch.cuda.amp.autocast(enabled=self.use_amp and torch.cuda.is_available()):
+
+                with torch.amp.autocast(
+                    device_type=("cuda" if is_cuda else "mps"),
+                    dtype=torch.float16,
+                    enabled=amp_enabled
+                ):
                     loss = self._loss_from_batch(x, device)
-                scaler.scale(loss).backward()
-                if self.grad_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                scaler.step(opt)
-                scaler.update()
+
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                    if self.grad_clip is not None:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    scaler.step(opt)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    if self.grad_clip is not None:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    opt.step()
+
                 self._update_ema()
                 running += loss.item()
+
             epoch_train = running / max(1, len(train_loader))
             history["train"].append(epoch_train)
 
@@ -189,7 +215,11 @@ class ImageCFMTrainer(Trainer):
                 with torch.no_grad():
                     for batch in val_loader:
                         x = batch["x"]
-                        with torch.cuda.amp.autocast(enabled=self.use_amp and torch.cuda.is_available()):
+                        with torch.amp.autocast(
+                            device_type=("cuda" if is_cuda else "mps"),
+                            dtype=torch.float16,
+                            enabled=amp_enabled
+                        ):
                             val_loss = self._loss_from_batch(x, device)
                         val_acc += val_loss.item()
                 epoch_val = val_acc / max(1, len(val_loader))
