@@ -60,3 +60,29 @@ class ImageDatasetSampler(nn.Module):
         xs = [self.dataset[i]["x"] for i in idxs]                # [C,H,W] en [-1,1]
         x = torch.stack(xs, dim=0).to(self._device_buf.device)   # [n,C,H,W]
         return x
+
+
+# src/datasets/right_half_only.py  (añade al final, o crea src/datasets/__init__.py)
+from torch.utils.data import DataLoader
+import torch
+
+def make_loaders(
+    root: str,
+    size: int = 64,
+    batch_size: int = 64,
+    to_gray: bool = False,
+    num_workers: int = 4,
+    pin_memory: bool = True,
+):
+    train_set = RightHalfImages(root, split="train", size=size, to_gray=to_gray)
+    val_set   = RightHalfImages(root, split="val",   size=size, to_gray=to_gray)
+    test_set  = RightHalfImages(root, split="test",  size=size, to_gray=to_gray)
+
+    pin = pin_memory and torch.cuda.is_available()
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=pin, drop_last=True)
+    val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=pin, drop_last=False)
+    test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=pin, drop_last=False)
+    return train_loader, val_loader, test_loader

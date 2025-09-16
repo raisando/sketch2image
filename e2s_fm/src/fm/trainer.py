@@ -89,13 +89,18 @@ class ConditionalScoreMatchingTrainer(Trainer):
 # ------------------------------------------------------
 # NUEVO: ImageCFMTrainer para imágenes (UNet)
 # ------------------------------------------------------
+import math, copy, torch
+import torch.nn.functional as F
+from tqdm import tqdm
+
 class ImageCFMTrainer(Trainer):
-    def __init__(self, path, model, ema_decay=0.999):
+    def __init__(self, path, model, ema_decay=0.9999, use_amp=True, grad_clip=1.0):
         super().__init__(model)
         self.path = path
         self.ema_decay = ema_decay
         self.ema_model = None
-        # Intentar configurar EMA, pero no morir si falla
+        self.use_amp = use_amp
+        self.grad_clip = grad_clip
         if ema_decay is not None:
             try:
                 self.ema_model = copy.deepcopy(self.model).eval()
@@ -106,34 +111,21 @@ class ImageCFMTrainer(Trainer):
                 self.ema_model = None
 
     def get_train_loss(self, **kwargs) -> torch.Tensor:
-        batch_size = kwargs.get("batch_size", 64)
-        device = kwargs.get(
-            "device",
-            next(self.model.parameters()).device
-        )
-        return self._one_batch_loss(batch_size, device)
+        # ya no se usa (satisface abstracto)
+        raise NotImplementedError
 
-    def _one_batch_loss(self, batch_size: int, device: torch.device):
-        # z ~ p_data
-        z_samp = self.path.p_data.sample(batch_size)
-        z = z_samp[0] if isinstance(z_samp, (tuple, list)) else z_samp   # [B,C,H,W]
-        z = z.to(device)
+    def _loss_from_batch(self, z: torch.Tensor, device: torch.device) -> torch.Tensor:
+        """
+        z: [B,C,H,W] ground-truth (muestra de p_data) en [-1,1]
+        """
+        z = z.to(device, non_blocking=True)
         B, C, H, W = z.shape
-
         eps = 1e-3
         t_img = torch.rand(B, 1, 1, 1, device=device).clamp(eps, 1.0 - eps)
-        t_vec = t_img.view(B, 1)
 
-        # x_t y u_ref desde el path (soporta imagen o vector)
-        try:
-            x_t   = self.path.sample_conditional_path(z, t_img)
-            u_ref = self.path.conditional_vector_field(x_t, z, t_img)
-        except Exception:
-            z_vec   = z.view(B, -1)
-            x_vec   = self.path.sample_conditional_path(z_vec, t_vec)
-            u_ref_v = self.path.conditional_vector_field(x_vec, z_vec, t_vec)
-            x_t   = x_vec.view(B, C, H, W)
-            u_ref = u_ref_v.view(B, C, H, W)
+        # x_t y u_ref desde el path (acepta imagen)
+        x_t   = self.path.sample_conditional_path(z, t_img)          # [B,C,H,W]
+        u_ref = self.path.conditional_vector_field(x_t, z, t_img)    # [B,C,H,W]
 
         y = torch.zeros(B, dtype=torch.long, device=device)  # uncond
         u_pred = self.model(x_t, t_img, y)
@@ -141,16 +133,25 @@ class ImageCFMTrainer(Trainer):
         # pérdida robusta
         mse   = F.mse_loss(u_pred, u_ref)
         huber = F.smooth_l1_loss(u_pred, u_ref)
-        loss  = 0.5 * mse + 0.5 * huber
-        return loss
+        return 0.5 * mse + 0.5 * huber
 
-    def train(self, num_epochs: int, device: torch.device, lr: float = 1e-3, batch_size: int = 64,
-              val_p_data=None, val_batches: int = 5):
+    def _update_ema(self):
+        if self.ema_model is None:
+            return
+        with torch.no_grad():
+            for p, pe in zip(self.model.parameters(), self.ema_model.parameters()):
+                pe.data.mul_(self.ema_decay).add_(p.data, alpha=1.0 - self.ema_decay)
+
+    def train(self, num_epochs: int, device: torch.device, lr: float = 1e-3,
+              train_loader=None, val_loader=None):
+        assert train_loader is not None, "train_loader es requerido"
         self.model.to(device)
-        self.ema_model.to(device)
+        if self.ema_model is not None:
+            self.ema_model.to(device)
+
         opt = torch.optim.AdamW(self.model.parameters(), lr=lr, betas=(0.9, 0.99), weight_decay=1e-4)
 
-        # scheduler con warmup + cosine
+        # scheduler warmup + cosine
         warmup = max(10, num_epochs // 20)
         def lr_lambda(epoch):
             if epoch < warmup:
@@ -159,46 +160,42 @@ class ImageCFMTrainer(Trainer):
             return 0.5 * (1 + math.cos(math.pi * prog))
         sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
 
-        # opcional: path de validación (mismo path pero p_data=val)
-        path_val = None
-        if val_p_data is not None:
-            # clonar path con p_data de validación (simple, alpha, beta iguales)
-            path_val = copy.copy(self.path)
-            path_val.p_data = val_p_data.to(device)
+        scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp and torch.cuda.is_available())
 
-        train_losses, val_losses = [], []
-
-        pbar = tqdm(range(num_epochs), desc="train")
-        for epoch in pbar:
+        history = {"train": [], "val": []}
+        for epoch in tqdm(range(num_epochs), desc="train", leave=False, dynamic_ncols=True):
+            # --------- TRAIN ----------
             self.model.train()
-            opt.zero_grad(set_to_none=True)
-            loss = self._one_batch_loss(batch_size, device)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            opt.step()
-            # EMA (opcional)
-            if self.ema_model is not None:
-                with torch.no_grad():
-                    for p, pe in zip(self.model.parameters(), self.ema_model.parameters()):
-                        pe.data.mul_(self.ema_decay).add_(p.data, alpha=1.0 - self.ema_decay)
+            running = 0.0
+            for batch in train_loader:
+                x = batch["x"]  # RightHalfImages debe exponer "x"
+                opt.zero_grad(set_to_none=True)
+                with torch.cuda.amp.autocast(enabled=self.use_amp and torch.cuda.is_available()):
+                    loss = self._loss_from_batch(x, device)
+                scaler.scale(loss).backward()
+                if self.grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                scaler.step(opt)
+                scaler.update()
+                self._update_ema()
+                running += loss.item()
+            epoch_train = running / max(1, len(train_loader))
+            history["train"].append(epoch_train)
 
+            # --------- VAL ----------
+            if val_loader is not None:
+                self.model.eval()
+                val_acc = 0.0
+                with torch.no_grad():
+                    for batch in val_loader:
+                        x = batch["x"]
+                        with torch.cuda.amp.autocast(enabled=self.use_amp and torch.cuda.is_available()):
+                            val_loss = self._loss_from_batch(x, device)
+                        val_acc += val_loss.item()
+                epoch_val = val_acc / max(1, len(val_loader))
+                history["val"].append(epoch_val)
 
             sched.step()
-            train_losses.append(loss.item())
-            pbar.set_postfix({"loss": f"{loss.item():.4f}", "lr": f"{opt.param_groups[0]['lr']:.2e}"})
+            tqdm.write(f"epoch={epoch:04d} train={epoch_train:.4f}" + (f" val={epoch_val:.4f}" if val_loader else ""))
 
-            # validación liviana (promedio de N batches)
-            if path_val is not None:
-                self.model.eval()
-                with torch.no_grad():
-                    acc = 0.0
-                    for _ in range(val_batches):
-                        # usar temporalmente el path_val
-                        old = self.path
-                        self.path = path_val
-                        val_loss = self._one_batch_loss(batch_size, device)
-                        self.path = old
-                        acc += val_loss.item()
-                    val_losses.append(acc / val_batches)
-
-        return {"train": train_losses, "val": val_losses}
+        return history
