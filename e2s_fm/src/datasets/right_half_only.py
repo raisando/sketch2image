@@ -1,88 +1,100 @@
 from pathlib import Path
-from PIL import Image
-from torch.utils.data import Dataset
+from typing import Optional
+import torch
+from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
-import torch, random
-import torch.nn as nn
-
+from PIL import Image
 
 class RightHalfImages(Dataset):
     """
-    Lee pares [izq|der] y devuelve SOLO la derecha en [-1,1].
-    Asume *.jpg dentro de train/ val/ test/.
+    Dataset para pix2pix (A|B concatenadas horizontalmente).
+    Devuelve la mitad derecha (B) como tensor en [-1,1], shape [C,H,W].
     """
-    def __init__(self, root, split="train", size=32, to_gray=False):
-        self.files = sorted(Path(root).joinpath(split).glob("*.jpg"))
+    def __init__(self, root: str, size: int = 64, to_gray: bool = False):
+        self.root = Path(root)
+        exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        # listado recursivo; ignora ocultos
+        self.files = [
+            p for p in self.root.rglob("*")
+            if p.is_file() and (p.suffix.lower() in exts) and (not p.name.startswith("."))
+        ]
+        self.files.sort()
         self.size = size
         self.to_gray = to_gray
-        tx = [T.Resize((size, size*2))]
-        if to_gray:
-            tx += [T.Grayscale(num_output_channels=1)]
-        tx += [T.ToTensor()]
-        if to_gray:
-            tx += [T.Normalize([0.5], [0.5])]
-        else:
-            tx += [T.Normalize([0.5]*3, [0.5]*3)]
-        self.tx = T.Compose(tx)
 
-    def __len__(self): return len(self.files)
+        # redimensiona a (H=size, W=2*size) para que corte exacto la mitad
+        self.resize = T.Resize((size, 2 * size), interpolation=T.InterpolationMode.BICUBIC)
 
-    def __getitem__(self, i):
-        im = Image.open(self.files[i]).convert("RGB")
-        x = self.tx(im)     # [C, size, 2*size]
-        _, H, W = x.shape
-        right = x[:, :, W//2:]        # [C, size, size]
-        return {"x": right, "path": str(self.files[i])}
+    def __len__(self):
+        return len(self.files)
 
-class ImageDatasetSampler(nn.Module):
-    """
-    p_data para Flow Matching:
-      - .dim  (C*H*W)
-      - .shape (C,H,W)
-      - .sample(n) -> x  (solo x, [n,C,H,W] en [-1,1])
-      - .to(device) via register_buffer
-    """
-    def __init__(self, dataset):
-        super().__init__()
-        self.dataset = dataset
-        c = 1 if getattr(dataset, "to_gray", False) else 3
-        h = getattr(dataset, "size", None)
-        w = getattr(dataset, "size", None)
-        assert h and w, "Dataset debe exponer .size (int)"
+    def __getitem__(self, idx: int):
+        path = self.files[idx]
+        img = Image.open(path).convert("RGB")              # aseguramos 3 canales
+        img = self.resize(img)                             # (H=size, W=2*size)
+        img = T.ToTensor()(img)                            # [3, H, 2*W] en [0,1]
 
-        self.shape = (c, h, w)
-        self.dim   = c * h * w
+        if self.to_gray:
+            img = torch.mean(img, dim=0, keepdim=True)     # [1, H, 2*W]
 
-        self.register_buffer("_device_buf", torch.zeros(1), persistent=False)
+        # cortar mitad derecha (B)
+        _, H, W = img.shape
+        right = img[:, :, W // 2 :]                        # [C, H, W/2] == [C, size, size]
 
-    def sample(self, n: int):
-        idxs = random.choices(range(len(self.dataset)), k=n)
-        xs = [self.dataset[i]["x"] for i in idxs]                # [C,H,W] en [-1,1]
-        x = torch.stack(xs, dim=0).to(self._device_buf.device)   # [n,C,H,W]
-        return x
+        # normalizar a [-1,1]
+        right = right * 2.0 - 1.0
 
+        return {"x": right, "path": str(path)}
 
-# src/datasets/right_half_only.py  (añade al final, o crea src/datasets/__init__.py)
-from torch.utils.data import DataLoader
-import torch
+def make_loaders(data_root: str, size: int, batch_size: int, to_gray: bool = False, num_workers: int = 8):
+    root = Path(data_root)
+    train_set = RightHalfImages(root / "train", size=size, to_gray=to_gray)
+    val_set   = RightHalfImages(root / "val",   size=size, to_gray=to_gray)
+    test_set  = RightHalfImages(root / "test",  size=size, to_gray=to_gray)
 
-def make_loaders(
-    root: str,
-    size: int = 64,
-    batch_size: int = 64,
-    to_gray: bool = False,
-    num_workers: int = 4,
-    pin_memory: bool = True,
-):
-    train_set = RightHalfImages(root, split="train", size=size, to_gray=to_gray)
-    val_set   = RightHalfImages(root, split="val",   size=size, to_gray=to_gray)
-    test_set  = RightHalfImages(root, split="test",  size=size, to_gray=to_gray)
+    # prints útiles para sanity
+    print(f"[ds] train_root={root/'train'} n={len(train_set)}")
+    print(f"[ds] val_root={root/'val'} n={len(val_set)}")
+    print(f"[ds] test_root={root/'test'} n={len(test_set)}")
 
-    pin = pin_memory and torch.cuda.is_available()
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=pin, drop_last=True)
+                            num_workers=num_workers, pin_memory=True, drop_last=True)
     val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=pin, drop_last=False)
+                            num_workers=num_workers, pin_memory=True, drop_last=False)
     test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=pin, drop_last=False)
+                            num_workers=num_workers, pin_memory=True, drop_last=False)
     return train_loader, val_loader, test_loader
+
+
+import torch
+import random
+
+class ImageDatasetSampler:
+    """
+    Sampler mínimo para datasets de imágenes que entregan dicts con clave 'x' (tensor en [-1,1]).
+    Provee .sample(batch_size) -> [B,C,H,W] y expone .dim para el path.
+    """
+    def __init__(self, dataset, device=None):
+        self.dataset = dataset
+        x0 = dataset[0]["x"]
+        assert isinstance(x0, torch.Tensor), "El dataset debe retornar un tensor en dataset[i]['x']"
+        self._shape = tuple(x0.shape)  # (C,H,W)
+        self._device = device
+
+    @property
+    def dim(self):
+        C,H,W = self._shape
+        return C * H * W
+
+    def to(self, device):
+        self._device = device
+        return self
+
+    @torch.no_grad()
+    def sample(self, batch_size: int) -> torch.Tensor:
+        n = len(self.dataset)
+        idxs = torch.randint(low=0, high=n, size=(batch_size,))
+        batch = torch.stack([self.dataset[int(i)]["x"] for i in idxs])
+        if self._device is not None:
+            batch = batch.to(self._device, non_blocking=True)
+        return batch

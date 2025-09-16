@@ -8,7 +8,7 @@ from src.datasets.right_half_only import make_loaders, ImageDatasetSampler, Righ
 from src.fm import alpha_beta as ab, probability_path as pp
 from src.fm.trainer import ImageCFMTrainer
 from src.model.unet import FMUNet
-from src.tools.utils import sample_and_save, eval_loss
+from src.tools.utils import sample_and_save, eval_loss, eval_on_loader_with_trainer
 
 def main():
     ap = argparse.ArgumentParser()
@@ -85,7 +85,7 @@ def main():
         f"{stamp}"
     )
     plt.gcf().text(0.98, 0.02, hparams, ha="right", va="bottom",
-                   bbox=dict(boxstyle="round", fc="white", ec="gray"))
+                    bbox=dict(boxstyle="round", fc="white", ec="gray"))
     diag_path = outdir / "diagnostics.png"
     plt.tight_layout(); plt.savefig(diag_path, dpi=150); plt.close()
     print("[ok] saved:", diag_path)
@@ -97,18 +97,19 @@ def main():
         torch.save(trainer.ema_model.state_dict(), outdir / "model_ema.pth")
         print("[ok] saved:", outdir / "model_ema.pth")
 
-    # Test loss con EMA (opcional)
-    p_test = ImageDatasetSampler(RightHalfImages(args.data_root, split="test", size=args.size, to_gray=args.gray)).to(device)
-    test_loss = eval_loss(trainer, p_test, device, batches=min(100, len(test_loader) or 100), batch_size=args.batch, use_ema=True)
-    print(f"[report] test_loss (EMA): {test_loss:.6f}")
+    # === Evaluación FINAL en TEST sobre TODO el loader, usando EMA si existe ===
+    test_loss_full = eval_on_loader_with_trainer(trainer, test_loader, device, use_ema=True)
+    print(f"[report] test_loss (EMA, full test set): {test_loss_full:.6f}")
+
 
     # Samples (EMA si existe)
     samples_path = outdir / "samples.png"
     model_for_sampling = unet
     if (outdir / "model_ema.pth").exists():
         ema = FMUNet(channels=channels, num_residual_layers=depth, t_embed_dim=40, y_embed_dim=40,
-                     in_channels=C, out_channels=C, num_classes=1).to(device)
-        ema.load_state_dict(torch.load(outdir / "model_ema.pth", map_location=device))
+                    in_channels=C, out_channels=C, num_classes=1).to(device)
+        state = torch.load(outdir / "model_ema.pth", map_location=device, weights_only=True)
+        ema.load_state_dict(state)
         model_for_sampling = ema
 
     sample_and_save(model_for_sampling, samples_path, num=36, size=args.size, channels=C, steps=750, device=device)
