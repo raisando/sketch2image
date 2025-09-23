@@ -93,7 +93,8 @@ def sample_and_save(
         b = min(batch_size, num - done)
         xT = torch.randn(b, channels, size, size, device=device)  # t=1
         ts_b = ts[:, :, :, :, :].expand(b, -1, 1, 1, 1)
-        x0 = simulator.simulate(xT, ts_b)  # integra 1→0
+        with torch.no_grad():
+            x0 = simulator.simulate(xT, ts_b)
         imgs.append(x0)
         done += b
 

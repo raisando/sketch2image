@@ -110,6 +110,43 @@ class EulerSimulator(Simulator):
     def step(self, xt: torch.Tensor, t: torch.Tensor, h: torch.Tensor):
         return xt + self.ode.drift_coefficient(xt,t) * h
 
+    @torch.no_grad()
+    def simulate(self, x_init: torch.Tensor, ts: torch.Tensor) -> torch.Tensor:
+        """
+        Integra por Euler siguiendo los tiempos en ts, usando h = t_{k+1} - t_k.
+        - x_init: (B, C, H, W)  estado inicial en t = ts[:, 0]
+        - ts: (B, S, 1, 1, 1) o (S,) o (B, S). Se normaliza internamente.
+        Devuelve x en t = ts[:, -1].
+        """
+        x = x_init
+
+        # Normaliza ts a (B, S, 1, 1, 1)
+        if ts.dim() == 1:  # (S,)
+            B = x.shape[0]
+            ts = ts.view(1, -1, 1, 1, 1).expand(B, -1, -1, -1, -1)
+        elif ts.dim() == 2:  # (B, S)
+            ts = ts.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (B,S,1,1,1)
+        elif ts.dim() == 5:
+            pass
+        else:
+            raise ValueError(f"ts con shape no soportada: {ts.shape}")
+
+        B, S = ts.shape[0], ts.shape[1]
+        for k in range(S - 1):
+            t_k  = ts[:, k]      # (B,1,1,1)
+            t_k1 = ts[:, k + 1]  # (B,1,1,1)
+            h    = t_k1 - t_k    # NEGATIVO si ts va 1→0
+            # Asegura broadcasting correcto
+            if h.dim() == 4:
+                pass
+            elif h.dim() == 5 and h.shape[-1] == 1:
+                h = h.squeeze(-1)  # por si venía (B,1,1,1,1)
+            else:
+                # fuerza a (B,1,1,1)
+                h = h.view(B, 1, 1, 1)
+            x = self.step(x, t_k.squeeze(-1) if t_k.dim()==5 else t_k, h)
+        return x
+
 class EulerMaruyamaSimulator(Simulator):
     def __init__(self, sde: SDE):
         self.sde = sde
