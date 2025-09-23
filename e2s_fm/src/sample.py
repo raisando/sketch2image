@@ -37,10 +37,9 @@ def main():
     unet.load_state_dict(state)
     print(f"[ok] cargado {args.ckpt}")
 
-    model_for_sampling = NegatedModel(unet).to(device)
 
     # samplear
-    sample_and_save(model_for_sampling, Path(args.out),
+    sample_and_save(unet, Path(args.out),
                     num=args.num, size=args.size, channels=args.channels,
                     steps=args.steps, device=device)
     print(f"[ok] guardado {args.out}")
