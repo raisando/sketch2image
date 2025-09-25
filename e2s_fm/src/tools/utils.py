@@ -145,3 +145,15 @@ def eval_on_loader_with_trainer(trainer, loader, device, use_ema=True):
         total += loss.item() * bs
         n += bs
     return total / max(1, n)
+
+
+# --- sanity prints: tamaños y primeras rutas ---
+def _peek(loader, name):
+    ds = loader.dataset
+    print(f"[{name}] n={len(ds)} root≈{getattr(ds, 'root', None)}")
+    try:
+        ex = ds[0]
+        print(f"[{name}] ejemplo path={ex.get('path', 'N/A')}, x.shape={ex['x'].shape}, "
+            f"x.min={float(ex['x'].min()):.2f}, x.max={float(ex['x'].max()):.2f}")
+    except Exception as e:
+        print(f"[{name}] peek error:", e)

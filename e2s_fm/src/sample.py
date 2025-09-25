@@ -25,11 +25,11 @@ def main():
 
     # definir tu UNet con los mismos hparams que en train.py
     unet = FMUNet(
-        channels=[32,64,128],
-        num_residual_layers=2,
-        t_embed_dim=40, y_embed_dim=40,
-        in_channels=args.channels, out_channels=args.channels,
-        num_classes=1
+        channels            = [32, 64, 128],
+        num_residual_layers = 2,
+        t_embed_dim         = 40, y_embed_dim=40,
+        in_channels         = args.channels, out_channels=args.channels,
+        num_classes         = 1
     ).to(device)
 
     # cargar pesos
