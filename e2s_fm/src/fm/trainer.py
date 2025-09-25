@@ -8,6 +8,8 @@ import math, copy
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from typing import Optional, Dict, List
+
 
 
 from . import probability_path as pp  # import relativo
@@ -89,13 +91,84 @@ class ConditionalScoreMatchingTrainer(Trainer):
 
 
 # ------------------------------------------------------
-# ImageCFMTrainer (readable, step-based, safer AMP)
+# ImageCFMTrainer REDONE
 # ------------------------------------------------------
-import json, math, copy, torch
-from pathlib import Path
-from typing import Optional, Dict, List
-import torch.nn.functional as F
-from tqdm import tqdm
+
+class ImageCFMTrainerLight:
+    """
+    Trainer mínimo para Flow Matching con UNet:
+      - usa train_loader
+      - sin AMP, sin EMA, sin validación
+      - history["train"] = promedio de loss por epoch
+    Requiere:
+      - self.path con sample_conditional_path() y conditional_vector_field()
+      - self.model: forward(x, t, y) -> u_pred (mismo shape que x)
+    """
+    def __init__(self, path, model):
+        self.path = path
+        self.model = model
+
+    @staticmethod
+    def _get_x_from_batch(batch):
+        # admite batch["x"] o tensor directo o (x, ...)
+        if isinstance(batch, dict):
+            return batch["x"] if "x" in batch else next(iter(batch.values()))
+        if isinstance(batch, (tuple, list)):
+            return batch[0]
+        return batch  # asume tensor
+
+    def get_train_loss(self, batch, device: torch.device) -> torch.Tensor:
+        """
+        Calcula la pérdida de FM para un batch.
+        """
+        x = self._get_x_from_batch(batch).to(device, non_blocking=True)  # [B,C,H,W]
+        B = x.shape[0]
+        eps = 1e-3
+        t = torch.rand(B, 1, 1, 1, device=device).clamp_(eps, 1.0 - eps)
+
+        x_t   = self.path.sample_conditional_path(x, t)        # [B,C,H,W]
+        u_ref = self.path.conditional_vector_field(x_t, x, t)  # [B,C,H,W]
+
+        y = torch.zeros(B, dtype=torch.long, device=device)    # uncond
+        u_pred = self.model(x_t, t, y)
+
+        mse   = F.mse_loss(u_pred, u_ref)
+        huber = F.smooth_l1_loss(u_pred, u_ref)
+        return 0.5 * mse + 0.5 * huber
+
+    def train(
+        self,
+        *,
+        device: torch.device,
+        lr: float = 1e-4,
+        epochs: int = 200,
+        train_loader,
+    ) -> Dict[str, List[float]]:
+        """
+        Loop de entrenamiento por epochs × batches usando train_loader.
+        """
+        self.model.to(device)
+        opt = torch.optim.AdamW(self.model.parameters(), lr=lr, betas=(0.9, 0.99), weight_decay=1e-4)
+
+        history: Dict[str, List[float]] = {"train": []}
+
+        for epoch in tqdm(range(epochs), desc="train(epochs)", dynamic_ncols=True):
+            self.model.train()
+            running = 0.0
+
+            for batch in train_loader:
+                opt.zero_grad(set_to_none=True)
+                loss = self.get_train_loss(batch, device)
+                loss.backward()
+                opt.step()
+                running += float(loss.item())
+
+            epoch_loss = running / max(1, len(train_loader))
+            history["train"].append(epoch_loss)
+
+        return history
+
+
 
 class ImageCFMTrainer(Trainer):
     """
@@ -128,16 +201,6 @@ class ImageCFMTrainer(Trainer):
 
         self.save_dir: Optional[Path] = None
 
-    def get_train_loss(self, **kwargs) -> torch.Tensor:
-        """
-        Implementación concreta para satisfacer la ABC.
-        No se usa en el loop por-steps, pero permite instanciar sin error.
-        """
-        device = kwargs.get("device", next(self.model.parameters()).device)
-        batch_size = kwargs.get("batch_size", 64)
-        return self._one_batch_loss(batch_size=batch_size, device=device)
-
-    # === Core losses ===
     def _loss_from_batch(self, z: torch.Tensor, device: torch.device) -> torch.Tensor:
         """
         z: [B,C,H,W] ground-truth (sampled from p_data) in [-1, 1].
@@ -157,6 +220,23 @@ class ImageCFMTrainer(Trainer):
         mse   = F.mse_loss(u_pred, u_ref)
         huber = F.smooth_l1_loss(u_pred, u_ref)
         return 0.5 * mse + 0.5 * huber
+
+    def _one_batch_loss(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        """
+        Muestrea 'batch_size' imágenes z ~ p_data (que puede ser train/val/test)
+        y calcula la pérdida con _loss_from_batch.
+        """
+        # p_data es un sampler que expone .sample(batch_size) y retorna [B,C,H,W] en [-1,1]
+        z = self.path.p_data.sample(batch_size)
+        return self._loss_from_batch(z, device)
+
+    def get_train_loss(self, **kwargs) -> torch.Tensor:
+        """
+        No se usa en el loop por-steps
+        """
+        device = kwargs.get("device", next(self.model.parameters()).device)
+        batch_size = kwargs.get("batch_size", 64)
+        return self._one_batch_loss(batch_size=batch_size, device=device)
 
     # === EMA ===
     def _update_ema(self):
