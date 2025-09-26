@@ -14,7 +14,7 @@ import seaborn as sns
 from sklearn.datasets import make_moons, make_circles
 from torchvision import datasets, transforms
 from torchvision.utils import make_grid
-import mnistutils as util
+import mnitsutils as util
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -52,6 +52,35 @@ class MNISTSampler(nn.Module, util.Sampleable):
         samples = torch.stack(samples).to(self.dummy)
         labels = torch.tensor(labels, dtype=torch.int64).to(self.dummy.device)
         return samples, labels
+
+# ==== Mmodelo condicional por sketch ====
+import torch.nn as nn
+from diffusers import UNet2DModel
+
+class CondUNet(nn.Module):
+    """
+    DDPM condicional por imagen: concatena [x_t, sketch] en el canal.
+    - x_t: foto ruidosa [B,3,H,W]py
+    - sketch: condición [B,1,H,W] (o [B,3,H,W] si no es gris)
+    """
+    def __init__(self, sample_size: int = 256, gray_sketch: bool = True):
+        super().__init__()
+        in_total = 3 + (1 if gray_sketch else 3)
+        self.unet = UNet2DModel(
+            sample_size=sample_size,
+            in_channels=in_total,
+            out_channels=3,
+            # bloques moderados; ajusta si tu GPU aprieta
+            block_out_channels=(128, 256, 256, 512),
+            down_block_types=("DownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D"),
+            up_block_types=("AttnUpBlock2D", "AttnUpBlock2D", "AttnUpBlock2D", "UpBlock2D"),
+        )
+
+    def forward(self, x_t: torch.Tensor, t: torch.Tensor, sketch: torch.Tensor) -> torch.Tensor:
+        # concatena en canales
+        x = torch.cat([x_t, sketch], dim=1)
+        return self.unet(x, t).sample  # predicción de ε (ruido)
+
 
 if __name__ == '__main__' :
     # Change these!
