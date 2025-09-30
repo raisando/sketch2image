@@ -22,3 +22,6 @@ datasets/
 *.jpeg
 *.png
 .DS_Store
+
+# datasets & artifacts
+e2s_fm/data/
