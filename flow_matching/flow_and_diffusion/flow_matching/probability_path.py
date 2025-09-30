@@ -13,8 +13,8 @@ from torch.func import vmap, jacrev
 from tqdm import tqdm
 import seaborn as sns
 from sklearn.datasets import make_moons, make_circles
-import distrib_utils as distrib
-import alpha_beta as ab
+from . import distrib_utils as distrib
+from . import alpha_beta as ab
 
 
 class ConditionalProbabilityPath(torch.nn.Module, ABC):
@@ -97,7 +97,7 @@ class GaussianConditionalProbabilityPath(ConditionalProbabilityPath):
         super().__init__(p_simple, p_data)
         self.alpha = alpha
         self.beta = beta
-        
+
 
     def sample_conditioning_variable(self, num_samples: int) -> torch.Tensor:
         """
@@ -153,4 +153,3 @@ class GaussianConditionalProbabilityPath(ConditionalProbabilityPath):
         alpha_t = self.alpha(t)
         beta_t = self.beta(t)
         return (z * alpha_t - x) / beta_t ** 2
-

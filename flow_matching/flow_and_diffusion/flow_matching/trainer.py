@@ -21,7 +21,7 @@ class Trainer(ABC):
         # Start
         self.model.to(device)
         opt = self.get_optimizer(lr)
-        self.model.train()
+        self.model.train() #activa modo entrenamiento
 
         # Train loop
         pbar = tqdm(enumerate(range(num_epochs)))

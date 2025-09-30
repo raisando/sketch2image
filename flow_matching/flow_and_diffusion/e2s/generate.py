@@ -69,3 +69,4 @@ for idx, w in enumerate(guidance_scales):
     axes[idx].axis("off")
     axes[idx].set_title(f"Guidance: $w={w:.1f}$", fontsize=25)
 plt.show()
+

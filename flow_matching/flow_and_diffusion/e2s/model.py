@@ -46,6 +46,7 @@ class MNISTSampler(nn.Module, util.Sampleable):
         """
         if num_samples > len(self.dataset):
             raise ValueError(f"num_samples exceeds dataset size: {len(self.dataset)}")
+        
         indices = torch.randperm(len(self.dataset))[:num_samples]
         samples, labels = zip(*[self.dataset[i] for i in indices])
         samples = torch.stack(samples).to(self.dummy)
@@ -69,7 +70,7 @@ if __name__ == '__main__' :
         beta = util.LinearBeta()
     ).to(device)
 
-    # Sample
+    # Sample 
     num_samples = num_rows * num_cols
     z, _ = path.p_data.sample(num_samples)
     z = z.view(-1, 1, 32, 32)

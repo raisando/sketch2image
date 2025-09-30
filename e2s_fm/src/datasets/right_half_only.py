@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import List, Dict, Optional
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
@@ -98,3 +98,66 @@ class ImageDatasetSampler:
         if self._device is not None:
             batch = batch.to(self._device, non_blocking=True)
         return batch
+
+
+class FashionMNIST(Dataset):
+    def __init__(self, root: Path, size: int = 28):
+        self.root = Path(root)
+        exts = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+        self.files: List[Path] = [
+            p for p in self.root.rglob("*")
+            if p.is_file() and (p.suffix.lower() in exts) and not p.name.startswith(".")
+        ]
+        self.files.sort()
+        self.size = size
+        self.resize = T.Resize((size, size), interpolation=T.InterpolationMode.BICUBIC)
+
+    def __len__(self): return len(self.files)
+
+    def __getitem__(self, idx: int):
+        p = self.files[idx]
+        img = Image.open(p).convert("L")      # 1 canal
+        img = self.resize(img)                # (size,size)
+        x = T.ToTensor()(img)                 # [1,H,W] en [0,1]
+        x = x * 2.0 - 1.0                     # [-1,1]
+        return {"x": x, "path": str(p)}
+
+
+from pathlib import Path
+from torch.utils.data import Dataset
+
+class ClassFilteredDataset(Dataset):
+    """
+    Envuelve un dataset que retorna {"x": tensor, "path": ".../label/filename.png"} y
+    filtra por una lista de labels permitidos (enteros o strings).
+    """
+    def __init__(self, base: Dataset, allowed_labels):
+        self.base = base
+        self.allowed = set(map(str, allowed_labels))
+        # pre-indexar
+        keep = []
+        for i in range(len(base)):
+            p = Path(base[i]["path"])
+            label = p.parent.name  # carpeta de la clase
+            if label in self.allowed:
+                keep.append(i)
+        self.idxs = keep
+
+    def __len__(self): return len(self.idxs)
+
+    def __getitem__(self, idx):
+        return self.base[self.idxs[idx]]
+
+
+def make_loaders_mnist(data_root: str, size: int, batch_size: int,
+                       num_workers: int = 8,
+                       class_filter=None):
+    root = Path(data_root)
+    train_set = FashionMNIST(root / "train", size=size)
+    if class_filter is not None:
+        train_set = ClassFilteredDataset(train_set, class_filter)
+
+    print(f"[ds] train_root={root/'train'} n={len(train_set)}")
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=True, drop_last=True)
+    return train_loader

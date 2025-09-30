@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
 
-from src.datasets.right_half_only import make_loaders, ImageDatasetSampler
+from src.datasets.right_half_only import make_loaders_mnist, ImageDatasetSampler
 from src.fm import alpha_beta as ab, probability_path as pp
 from src.fm.trainer import ImageCFMTrainerLight
 from src.model.unet import FMUNet
@@ -26,9 +26,10 @@ def main():
     print(f"[info] device={device}")
 
     # Loaders (usaremos SOLO train_loader aquí)
-    train_loader, val_loader, test_loader = make_loaders(
-        args.data_root, size=args.size, batch_size=args.batch, to_gray=args.gray,
-        num_workers=args.num_workers
+    train_loader = make_loaders_mnist(
+        data_root=args.data_root,
+        size=28, batch_size=64, num_workers=8,
+        class_filter=[0]
     )
 
     # p_data y Path
@@ -39,7 +40,6 @@ def main():
         beta=ab.SquareRootBeta()
     ).to(device)
 
-    # Modelo chiquito (como el “antiguo”)
     C = 1 if args.gray else 3
     channels = [32, 64, 128]
     depth = 2
@@ -73,12 +73,12 @@ def main():
     plt.legend(loc="upper right")
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     hparams = (f"res={args.size}, C={C}\n"
-               f"channels={channels}, depth={depth}\n"
-               f"batch={args.batch}, lr={args.lr}\n"
-               f"epochs={args.epochs}, device={device}\n"
-               f"{stamp}")
+                f"channels={channels}, depth={depth}\n"
+                f"batch={args.batch}, lr={args.lr}\n"
+                f"epochs={args.epochs}, device={device}\n"
+                f"{stamp}")
     plt.gcf().text(0.98, 0.02, hparams, ha="right", va="bottom",
-                   bbox=dict(boxstyle="round", fc="white", ec="gray"))
+                bbox=dict(boxstyle="round", fc="white", ec="gray"))
     diag_path = outdir / "diagnostics.png"
     plt.tight_layout(); plt.savefig(diag_path, dpi=150); plt.close()
     print("[ok] saved:", diag_path)
