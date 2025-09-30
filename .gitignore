@@ -9,3 +9,16 @@ __pycache__/
 *.pth
 *.pt
 *.csv
+
+# data & artifacts
+e2s_fm/data/
+runs/
+datasets/
+*.pt
+*.pth
+*.ckpt
+*.zip
+*.jpg
+*.jpeg
+*.png
+.DS_Store
