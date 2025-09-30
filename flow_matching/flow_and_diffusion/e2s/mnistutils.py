@@ -19,7 +19,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class Sampleable(ABC):
     """
     Distribution which can be sampled from
-    """
+    """ 
     @abstractmethod
     def sample(self, num_samples: int) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
@@ -43,7 +43,7 @@ class IsotropicGaussian(nn.Module, Sampleable):
         self.shape = shape
         self.std = std
         self.dummy = nn.Buffer(torch.zeros(1)) # Will automatically be moved when self.to(...) is called...
-
+        
     def sample(self, num_samples) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.std * torch.randn(num_samples, *self.shape).to(self.dummy.device), None
 
@@ -82,7 +82,7 @@ class ConditionalProbabilityPath(nn.Module, ABC):
             - y: (num_samples, label_dim)
         """
         pass
-
+    
     @abstractmethod
     def sample_conditional_path(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
@@ -94,7 +94,7 @@ class ConditionalProbabilityPath(nn.Module, ABC):
             - x: samples from p_t(x|z), (num_samples, c, h, w)
         """
         pass
-
+        
     @abstractmethod
     def conditional_vector_field(self, x: torch.Tensor, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
@@ -105,7 +105,7 @@ class ConditionalProbabilityPath(nn.Module, ABC):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - conditional_vector_field: conditional vector field (num_samples, c, h, w)
-        """
+        """ 
         pass
 
     @abstractmethod
@@ -118,7 +118,7 @@ class ConditionalProbabilityPath(nn.Module, ABC):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - conditional_score: conditional score (num_samples, c, h, w)
-        """
+        """ 
         pass
 
 class Alpha(ABC):
@@ -131,7 +131,7 @@ class Alpha(ABC):
         assert torch.allclose(
             self(torch.ones(1,1,1,1)), torch.ones(1,1,1,1)
         )
-
+        
     @abstractmethod
     def __call__(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -140,7 +140,7 @@ class Alpha(ABC):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - alpha_t (num_samples, 1, 1, 1)
-        """
+        """ 
         pass
 
     def dt(self, t: torch.Tensor) -> torch.Tensor:
@@ -150,11 +150,11 @@ class Alpha(ABC):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - d/dt alpha_t (num_samples, 1, 1, 1)
-        """
+        """ 
         t = t.unsqueeze(1)
         dt = vmap(jacrev(self))(t)
         return dt.view(-1, 1, 1, 1)
-
+    
 class Beta(ABC):
     def __init__(self):
         # Check beta_0 = 1
@@ -165,7 +165,7 @@ class Beta(ABC):
         assert torch.allclose(
             self(torch.ones(1,1,1,1)), torch.zeros(1,1,1,1)
         )
-
+        
     @abstractmethod
     def __call__(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -174,8 +174,8 @@ class Beta(ABC):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - beta_t (num_samples, 1, 1, 1)
-        """
-        pass
+        """ 
+        pass 
 
     def dt(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -184,7 +184,7 @@ class Beta(ABC):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - d/dt beta_t (num_samples, 1, 1, 1)
-        """
+        """ 
         t = t.unsqueeze(1)
         dt = vmap(jacrev(self))(t)
         return dt.view(-1, 1, 1, 1)
@@ -193,16 +193,16 @@ class LinearAlpha(Alpha):
     """
     Implements alpha_t = t
     """
-
+    
     def __call__(self, t: torch.Tensor) -> torch.Tensor:
         """
         Args:
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - alpha_t (num_samples, 1, 1, 1)
-        """
+        """ 
         return t
-
+    
     def dt(self, t: torch.Tensor) -> torch.Tensor:
         """
         Evaluates d/dt alpha_t.
@@ -210,9 +210,9 @@ class LinearAlpha(Alpha):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - d/dt alpha_t (num_samples, 1, 1, 1)
-        """
+        """ 
         return torch.ones_like(t)
-
+        
 class LinearBeta(Beta):
     """
     Implements beta_t = 1-t
@@ -223,9 +223,9 @@ class LinearBeta(Beta):
             - t: time (num_samples, 1)
         Returns:
             - beta_t (num_samples, 1)
-        """
+        """ 
         return 1-t
-
+        
     def dt(self, t: torch.Tensor) -> torch.Tensor:
         """
         Evaluates d/dt alpha_t.
@@ -233,9 +233,9 @@ class LinearBeta(Beta):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - d/dt alpha_t (num_samples, 1, 1, 1)
-        """
+        """ 
         return - torch.ones_like(t)
-
+    
 class GaussianConditionalProbabilityPath(ConditionalProbabilityPath):
     def __init__(self, p_data: Sampleable, p_simple_shape: List[int], alpha: Alpha, beta: Beta):
         p_simple = IsotropicGaussian(shape = p_simple_shape, std = 1.0)
@@ -253,7 +253,7 @@ class GaussianConditionalProbabilityPath(ConditionalProbabilityPath):
             - y: (num_samples, label_dim)
         """
         return self.p_data.sample(num_samples)
-
+    
     def sample_conditional_path(self, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Samples from the conditional distribution p_t(x|z)
@@ -264,7 +264,7 @@ class GaussianConditionalProbabilityPath(ConditionalProbabilityPath):
             - x: samples from p_t(x|z), (num_samples, c, h, w)
         """
         return self.alpha(t) * z + self.beta(t) * torch.randn_like(z)
-
+        
     def conditional_vector_field(self, x: torch.Tensor, z: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Evaluates the conditional vector field u_t(x|z)
@@ -274,7 +274,7 @@ class GaussianConditionalProbabilityPath(ConditionalProbabilityPath):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - conditional_vector_field: conditional vector field (num_samples, c, h, w)
-        """
+        """ 
         alpha_t = self.alpha(t) # (num_samples, 1, 1, 1)
         beta_t = self.beta(t) # (num_samples, 1, 1, 1)
         dt_alpha_t = self.alpha.dt(t) # (num_samples, 1, 1, 1)
@@ -291,7 +291,7 @@ class GaussianConditionalProbabilityPath(ConditionalProbabilityPath):
             - t: time (num_samples, 1, 1, 1)
         Returns:
             - conditional_score: conditional score (num_samples, c, h, w)
-        """
+        """ 
         alpha_t = self.alpha(t)
         beta_t = self.beta(t)
         return (z * alpha_t - x) / beta_t ** 2
@@ -387,14 +387,14 @@ class Simulator(ABC):
 class EulerSimulator(Simulator):
     def __init__(self, ode: ODE):
         self.ode = ode
-
+        
     def step(self, xt: torch.Tensor, t: torch.Tensor, h: torch.Tensor, **kwargs):
         return xt + self.ode.drift_coefficient(xt,t, **kwargs) * h
 
 class EulerMaruyamaSimulator(Simulator):
     def __init__(self, sde: SDE):
         self.sde = sde
-
+        
     def step(self, xt: torch.Tensor, t: torch.Tensor, h: torch.Tensor, **kwargs):
         return xt + self.sde.drift_coefficient(xt,t, **kwargs) * h + self.sde.diffusion_coefficient(xt,t, **kwargs) * torch.sqrt(h) * torch.randn_like(xt)
 
@@ -443,7 +443,7 @@ class Trainer(ABC):
         # Report model size
         size_b = model_size_b(self.model)
         print(f'Training model with size: {size_b / MiB:.3f} MiB')
-
+        
         # Start
         self.model.to(device)
         opt = self.get_optimizer(lr)
@@ -505,11 +505,11 @@ class CFGTrainer(Trainer):
     def get_train_loss(self, batch_size: int) -> torch.Tensor:
         # Step 1: Sample z,y from p_data
         z, y = self.path.p_data.sample(batch_size) # (bs, c, h, w), (bs,1)
-
+        
         # Step 2: Set each label to 10 (i.e., null) with probability eta
         xi = torch.rand(y.shape[0]).to(y.device)
         y[xi < self.eta] = 10.0
-
+        
         # Step 3: Sample t and x
         t = torch.rand(batch_size,1,1,1).to(z) # (bs, 1, 1, 1)
         x = self.path.sample_conditional_path(z,t) # (bs, 1, 32, 32)
