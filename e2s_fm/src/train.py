@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
 
-from src.datasets.right_half_only import make_loaders_mnist, ImageDatasetSampler
+from src.datasets.right_half_only import make_loaders_mnist, make_loaders, ImageDatasetSampler
 from src.fm import alpha_beta as ab, probability_path as pp
 from src.fm.trainer import ImageCFMTrainerLight
 from src.model.unet import FMUNet
@@ -25,12 +25,17 @@ def main():
     outdir = Path(args.out); outdir.mkdir(parents=True, exist_ok=True)
     print(f"[info] device={device}")
 
-    # Loaders (usaremos SOLO train_loader aquí)
-    train_loader = make_loaders_mnist(
+    # Fashion MNIST LOADER
+    '''train_loader = make_loaders_mnist(
         data_root=args.data_root,
         size=28, batch_size=64, num_workers=8,
         class_filter=[0]
-    )
+    )'''
+
+    # Edges2Shoes LOADER
+    train_loader,_,_ = make_loaders(
+        data_root=args.data_root,
+        size=28, batch_size=64, to_gray=args.gray, num_workers=8)
 
     # p_data y Path
     p_train = ImageDatasetSampler(train_loader.dataset).to(device)

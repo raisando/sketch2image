@@ -80,7 +80,7 @@ def sample_and_save(
     # Estado inicial: prior en t=1
     # OJO: el simulador asume que el primer tiempo en ts corresponde al estado inicial
     # así que vamos a pasar ts decreciente (1→0) y x_init ~ N(0, I)
-    ts = torch.linspace(1.0, 0.0, steps, device=device).view(1, -1, 1, 1, 1)
+    ts = torch.linspace(0.0, 1.0, steps, device=device).view(1, -1, 1, 1, 1)
 
     out_png = Path(out_png)
     out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -91,11 +91,11 @@ def sample_and_save(
     done = 0
     while done < num:
         b = min(batch_size, num - done)
-        xT = torch.randn(b, channels, size, size, device=device)  # t=1
+        x0 = torch.randn(b, channels, size, size, device=device)  # t=1
         ts_b = ts[:, :, :, :, :].expand(b, -1, 1, 1, 1)
         with torch.no_grad():
-            x0 = simulator.simulate(xT, ts_b)
-        imgs.append(x0)
+            xT = simulator.simulate(x0, ts_b)
+        imgs.append(xT)
         done += b
 
     x_all = torch.cat(imgs, dim=0)[:num]

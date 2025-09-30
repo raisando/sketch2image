@@ -13,7 +13,8 @@ from typing import Optional, Dict, List
 
 
 
-from . import probability_path as pp  # import relativo
+from . import probability_path as pp
+
 
 # -------------------------
 # Base trainer (genérico)

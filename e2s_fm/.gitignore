@@ -1,0 +1,9 @@
+
+# big stuff
+runs/
+data/
+*.pt
+*.pth
+*.ckpt
+*.zip
+.DS_Store

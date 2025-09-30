@@ -34,5 +34,5 @@ def csv_to_images(csv_path, out_dir, img_size=28):
         img.save(os.path.join(label_dir, f"{idx}.png"))
 
 # Uso:
-csv_to_images("/Users/raimundosandoval/code/U/sketch2image/sketch2image/e2s_fm/data/fashionmnist/fashion-mnist_train.csv", "images/train")
-csv_to_images("/Users/raimundosandoval/code/U/sketch2image/sketch2image/e2s_fm/data/fashionmnist/fashion-mnist_test.csv", "images/test")
+csv_to_images("/home/raisando/tesis/e2s_fm/data/fashionmnist/fashion-mnist_train.csv", "images/train")
+csv_to_images("/home/raisando/tesis/e2s_fm/data/fashionmnist/fashion-mnist_test.csv", "images/test")
