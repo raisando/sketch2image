@@ -2,8 +2,12 @@
 # big stuff
 runs/
 data/
+datasets/
 *.pt
 *.pth
 *.ckpt
 *.zip
+*.jpg
+*.jpeg
+*.png
 .DS_Store
