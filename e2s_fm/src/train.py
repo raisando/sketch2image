@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
 
-from src.datasets.right_half_only import make_loaders_mnist, make_loaders, ImageDatasetSampler
+from src.datasets.loaders import make_loaders_mnist,make_loaders_cifar10, make_loaders, ImageDatasetSampler
 from src.fm import alpha_beta as ab, probability_path as pp
 from src.fm.trainer import ImageCFMTrainerLight
 from src.model.unet import FMUNet
@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--out", type=str, default="runs/fm_light_min")
     ap.add_argument("--gray", action="store_true")
     ap.add_argument("--num_workers", type=int, default=8)
+    ap.add_argument("--label", type=int, default=0)
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
@@ -29,13 +30,24 @@ def main():
     '''train_loader = make_loaders_mnist(
         data_root=args.data_root,
         size=28, batch_size=64, num_workers=8,
-        class_filter=[0]
+        class_filter=[args.label]
     )'''
 
     # Edges2Shoes LOADER
+    '''
     train_loader,_,_ = make_loaders(
         data_root=args.data_root,
-        size=28, batch_size=64, to_gray=args.gray, num_workers=8)
+        size=28, batch_size=64, to_gray=args.gray, num_workers=8
+        )'''
+
+    # CIFAR10 LOADER
+    train_loader, test_loader = make_loaders_cifar10(
+        data_root=args.data_root,
+        size=32,
+        batch_size=64,
+        num_workers=8,
+        class_filter=[args.label]
+    )
 
     # p_data y Path
     p_train = ImageDatasetSampler(train_loader.dataset).to(device)

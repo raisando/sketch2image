@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from torchvision.utils import make_grid, save_image
 
-from src.datasets.right_half_only import make_loaders, ImageDatasetSampler, RightHalfImages
+from src.datasets.loaders import make_loaders, ImageDatasetSampler, RightHalfImages
 from src.fm import alpha_beta as ab, probability_path as pp
 from src.fm.trainer import ImageCFMTrainer, ImageCFMTrainerEpoch
 from src.model.unet import FMUNet

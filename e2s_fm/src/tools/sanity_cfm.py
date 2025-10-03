@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
 
-from src.datasets.right_half_only import RightHalfImages, ImageDatasetSampler
+from src.datasets.loaders import RightHalfImages, ImageDatasetSampler
 from src.fm import alpha_beta as ab, probability_path as pp
 from src.model.unet import FMUNet
 
