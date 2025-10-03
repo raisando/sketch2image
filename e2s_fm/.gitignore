@@ -1,12 +1,17 @@
-
-# big stuff
-runs/
-data/
-datasets/
-*.pt
-*.pth
-*.ckpt
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.env
+.venv
 *.zip
+*.pth
+*.pt
+*.csv
+e2s_fm/data/
+runs/
+*.ckpt
 *.jpg
 *.jpeg
 *.png
