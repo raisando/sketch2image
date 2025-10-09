@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
 from PIL import Image
 from .datasets import CocoTextDataset, ImageDatasetSampler, RightHalfImages, FashionMNISTLoader, CIFAR10Loader, ClassFilteredDataset
+from src.tools.utils import random_split_dataset
 
 
 def make_loaders(data_root: str, size: int, batch_size: int, to_gray: bool = False, num_workers: int = 8):
@@ -88,14 +89,18 @@ def make_loaders_cifar10(
 
 
 def make_loaders_coco_text(
-    data_root: str,                # e.g. data/coco
-    split      : str = "train",    # "train" o "val"
-    size       : int = 128,
-    batch_size : int = 64,
-    num_workers: int = 8,
-    val_ratio  : float = 0.01,
-    embeds_pt  : str = None        # e.g. data/coco/cache/coco_text_embeds_train_vitb32.pt
+    data_root   : str,               # e.g. "data/coco2017"
+    split       : str = "train",     # "train" o "val"
+    size        : int = 128,
+    batch_size  : int = 64,
+    num_workers : int = 8,
+    val_ratio   : float = 0.01,
+    embeds_pt   : str = None         # e.g. data/coco2017/cache/clip_caps_train_vitb32.pt
 ):
+    """
+    Si split == 'train' y val_ratio>0 -> retorna (train_loader, val_loader)
+    En otro caso -> retorna un solo loader (para evaluación o inferencia)
+    """
     root = Path(data_root)
     img_dir = root / "images" / (f"{split}2017")
     assert embeds_pt is not None, "embeds_pt requerido"
@@ -103,15 +108,24 @@ def make_loaders_coco_text(
 
     if split == "train" and val_ratio > 0:
         n = len(ds)
-        n_val = max(1, int(n * val_ratio))
+        n_val = min(1, int(n * val_ratio))
+        train_ratio = 1.0 - val_ratio
         n_train = n - n_val
-        train_set, val_set = random_split(ds, [n_train, n_val], generator=torch.Generator().manual_seed(42))
-        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
-                                  num_workers=num_workers, pin_memory=True, drop_last=True)
-        val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False,
-                                num_workers=num_workers, pin_memory=True, drop_last=False)
+        train_set, val_set = random_split_dataset(
+            ds, [train_ratio, val_ratio]
+        )
+        train_loader = DataLoader(
+            train_set, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers, pin_memory=True, drop_last=True
+        )
+        val_loader = DataLoader(
+            val_set, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, pin_memory=True, drop_last=False
+        )
         return train_loader, val_loader
     else:
-        loader = DataLoader(ds, batch_size=batch_size, shuffle=False,
-                            num_workers=num_workers, pin_memory=True, drop_last=False)
+        loader = DataLoader(
+            ds, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, pin_memory=True, drop_last=False
+        )
         return loader

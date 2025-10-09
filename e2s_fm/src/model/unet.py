@@ -354,8 +354,11 @@ class FMUNetCOCO(nn.Module):
         """
         B, device = x.size(0), x.device
 
-        t_embed = self.time_embedder(t)                 # [B, t_embed_dim]
+        t_embed = self.time_embedder(t)
+        if y is not None:
+            y = y.to(device=device, dtype=torch.long)  # [B, t_embed_dim]
         y_embed = self._make_y_embed(y, B, device)      # [B, y_embed_dim]
+
 
         x = self.init_conv(x)                           # [B, C0, H, W]
 

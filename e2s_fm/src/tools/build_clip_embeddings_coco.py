@@ -1,4 +1,3 @@
-# src/tools/build_clip_text_embeds.py
 import json, torch
 from pathlib import Path
 import open_clip

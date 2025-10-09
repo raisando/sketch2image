@@ -3,11 +3,11 @@ import argparse, json, datetime
 from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
-
-from src.datasets.loaders import make_loaders_mnist,make_loaders_cifar10, make_loaders, ImageDatasetSampler
+from torch.utils.data import Subset
+from src.datasets.loaders import make_loaders_mnist,make_loaders_cifar10,make_loaders_coco_text, make_loaders, ImageDatasetSampler
 from src.fm import alpha_beta as ab, probability_path as pp
 from src.fm.trainer import ImageCFMTrainerLight
-from src.model.unet import FMUNet
+from src.model.unet import FMUNet, FMUNetCOCO
 
 def main():
     ap = argparse.ArgumentParser()
@@ -19,7 +19,7 @@ def main():
     ap.add_argument("--out", type=str, default="runs/fm_light_min")
     ap.add_argument("--gray", action="store_true")
     ap.add_argument("--num_workers", type=int, default=8)
-    ap.add_argument("--label", type=int, default=0)
+    #ap.add_argument("--label", type=int, default=0)
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
@@ -41,6 +41,7 @@ def main():
         )'''
 
     # CIFAR10 LOADER
+    '''
     train_loader, test_loader = make_loaders_cifar10(
         data_root=args.data_root,
         size=32,
@@ -48,9 +49,22 @@ def main():
         num_workers=8,
         class_filter=[args.label]
     )
+    '''
+
+    # COCO17 LOADER
+    train_loader, val_loader = make_loaders_coco_text(
+        data_root=args.data_root,
+        size=128,                  # o 64 si quieres algo más liviano
+        batch_size=args.batch,
+        num_workers=args.num_workers,
+        val_ratio=0.01,
+        embeds_pt="data/coco2017/cache/clip_caps_train_vitb32.pt"
+    )
 
     # p_data y Path
-    p_train = ImageDatasetSampler(train_loader.dataset).to(device)
+    base_ds = train_loader.dataset.dataset if isinstance(
+        train_loader.dataset, Subset) else train_loader.dataset
+    p_train = ImageDatasetSampler(base_ds).to(device)
     path_obj = pp.GaussianConditionalProbabilityPath(
         p_data=p_train,
         alpha=ab.LinearAlpha(),
@@ -60,7 +74,7 @@ def main():
     C = 1 if args.gray else 3
     channels = [32, 64, 128]
     depth = 2
-    unet = FMUNet(
+    unet = FMUNetCOCO(
         channels=channels,
         num_residual_layers=depth,
         t_embed_dim=40, y_embed_dim=40,
@@ -100,7 +114,6 @@ def main():
     plt.tight_layout(); plt.savefig(diag_path, dpi=150); plt.close()
     print("[ok] saved:", diag_path)
 
-    # Nota: el sample lo harás con tu sample.py cargando outdir/"model.pth"
 
 if __name__ == "__main__":
     main()

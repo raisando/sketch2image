@@ -48,7 +48,7 @@ class ImageDatasetSampler:
 class CocoTextDataset(Dataset):
     def __init__(self, images_dir: str, embeds_pt: str, size: int = 128):
         self.images_dir = Path(images_dir)
-        self.embeds: Dict[int, torch.Tensor] = torch.load(embeds_pt)  # {image_id: [D]}
+        self.embeds: Dict[int, torch.Tensor] = torch.load(embeds_pt, weights_only=True)  # {image_id: [D]}
         # COCO filename: 12 dígitos (p.ej. 000000123456.jpg)
         self.items: List[Path] = sorted(self.images_dir.glob("*.jpg"))
         # Transform

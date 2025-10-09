@@ -11,6 +11,30 @@ from src.fm import cvectorfield as cvf
 from src.fm import sim_utils as sim
 
 
+from torch.utils.data import random_split
+
+def random_split_dataset(dataset, splits=[0.8, 0.2], seed: int = 42):
+    """
+    Divide un dataset en train/val/test de manera reproducible.
+
+    Args:
+        dataset: instancia de torch.utils.data.Dataset
+        splits: tupla con proporciones (train, val, test)
+        seed: semilla aleatoria para reproducibilidad
+
+    Returns:
+        train_set, val_set, test_set
+    """
+    print("[info] random_split_dataset with splits:", splits)
+    assert abs(sum(splits) - 1.0) < 1e-6, "Las proporciones deben sumar 1.0"
+    n = len(dataset)
+    lengths = [int(p * n) for p in splits]
+    lengths[-1] = n - sum(lengths[:-1])  # ajuste final
+
+    generator = torch.Generator().manual_seed(seed)
+    return random_split(dataset, lengths, generator=generator)
+
+
 @torch.no_grad()
 def eval_loss(
     trainer,
