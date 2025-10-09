@@ -211,6 +211,7 @@ class MNISTUNet(util.ConditionalVectorField):
 
         return x
 '''
+
 # ====== General ======
 class FMUNet(nn.Module):
     def __init__(
@@ -270,4 +271,105 @@ class FMUNet(nn.Module):
             x = decoder(x, t_embed, y_embed)
 
         x = self.final_conv(x)  # (bs, C_out, H, W)
+        return x
+
+class FMUNetCOCO(nn.Module):
+    """
+    UNet para Flow Matching condicionado por texto (embeddings CLIP).
+    Interfaz: forward(x, t, y)
+      - x: (B, C_in, H, W) en [-1,1]
+      - t: (B, 1, 1, 1)
+      - y:
+          * FloatTensor (B, clip_dim) -> proyección lineal a y_embed_dim
+          * LongTensor (B,) -> opcional: IDs de clase (si quisieras compat)
+          * None -> unconditional (vector de ceros)
+
+    Args:
+      channels           : lista de canales por nivel, p.ej. [64,128,256,512,512]
+      num_residual_layers: # de bloques residuales por nivel (no cambia resolución)
+      t_embed_dim        : dim del embedding de tiempo (Fourier)
+      y_embed_dim        : dim del embedding de condición usado en los bloques
+      in_channels/out_channels: canales de imagen
+      clip_dim           : dimensión del embedding de CLIP (ViT-B/32=512)
+      num_classes        : opcional, si quieres mantener soporte a IDs de clase
+    """
+    def __init__(
+        self,
+        channels: List[int],
+        num_residual_layers: int,
+        t_embed_dim: int,
+        y_embed_dim: int,
+        in_channels: int = 3,
+        out_channels: int = 3,
+        clip_dim: int = 512,
+        num_classes: int = 1,
+    ):
+        super().__init__()
+
+        # --- Embeddings ---
+        self.time_embedder = FourierEncoder(t_embed_dim)
+        self.clip_dim = clip_dim
+        self.y_proj   = nn.Linear(self.clip_dim, y_embed_dim)                # CLIP -> y_embed
+
+        # --- Backbone UNet ---
+        self.init_conv = nn.Sequential(
+            nn.Conv2d(in_channels, channels[0], kernel_size=3, padding=1),
+            nn.BatchNorm2d(channels[0]),
+            nn.SiLU()
+        )
+
+        encoders, decoders = [], []
+        for curr_c, next_c in zip(channels[:-1], channels[1:]):
+            encoders.append(Encoder(curr_c, next_c, num_residual_layers, t_embed_dim, y_embed_dim))
+            decoders.append(Decoder(next_c, curr_c, num_residual_layers, t_embed_dim, y_embed_dim))
+        self.encoders = nn.ModuleList(encoders)
+        self.decoders = nn.ModuleList(reversed(decoders))
+
+        self.midcoder   = Midcoder(channels[-1], num_residual_layers, t_embed_dim, y_embed_dim)
+        self.final_conv = nn.Conv2d(channels[0], out_channels, kernel_size=3, padding=1)
+
+    def _make_y_embed(self, y: torch.Tensor | None, B: int, device: torch.device) -> torch.Tensor:
+        """
+        Devuelve y_embed: [B, y_embed_dim]
+          - y Float [B, clip_dim] o [clip_dim]  -> y_proj
+          - y Long  [B] (IDs)                    -> y_embedder_ids
+          - y None                                -> ceros (uncond)
+        """
+        # CLIP embeddings
+        if y.dtype in (torch.float16, torch.float32, torch.float64):
+            y = y.to(device)
+            if y.ndim == 1:            # [clip_dim] -> [1, clip_dim] -> expand
+                y = y.unsqueeze(0).expand(B, -1)
+            elif y.ndim == 2 and y.size(0) == 1:
+                y = y.expand(B, -1)
+            elif y.ndim != 2 or y.size(0) != B:
+                raise ValueError(f"[FMUNetCOCO] y shape incompatible: {tuple(y.shape)} con batch={B}")
+            return self.y_proj(y)
+
+        raise TypeError(f"[FMUNetCOCO] dtype de y no soportado: {y.dtype}")
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor, y: torch.Tensor | None):
+        """
+        x: (B, C_in, H, W)    t: (B,1,1,1)    y: ver _make_y_embed
+        """
+        B, device = x.size(0), x.device
+
+        t_embed = self.time_embedder(t)                 # [B, t_embed_dim]
+        y_embed = self._make_y_embed(y, B, device)      # [B, y_embed_dim]
+
+        x = self.init_conv(x)                           # [B, C0, H, W]
+
+        residuals = []
+        for enc in self.encoders:
+            x = enc(x, t_embed, y_embed)
+            residuals.append(x.clone())
+
+        x = self.midcoder(x, t_embed, y_embed)
+
+        for dec in self.decoders:
+            res = residuals.pop()
+            x = x + res
+            x = dec(x, t_embed, y_embed)
+
+        x = self.final_conv(x)
         return x

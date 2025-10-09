@@ -28,7 +28,7 @@ path = pp.GaussianConditionalProbabilityPath(
 ).to(device)
 
 unet = FMUNet(
-    channels=[32, 64, 128],
+    channels = [64, 128, 256, 512, 512],
     num_residual_layers=2,
     t_embed_dim=40, y_embed_dim=40,
     in_channels=3, out_channels=3, num_classes=1
