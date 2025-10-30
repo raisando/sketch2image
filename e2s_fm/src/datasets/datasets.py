@@ -45,12 +45,33 @@ class ImageDatasetSampler:
 # ----------------------------------------------------------
 #          CocoText dataset loader
 # ----------------------------------------------------------
+# src/datasets/datasets.py
+from pathlib import Path
+from typing import Dict, List, Optional
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as T
+from PIL import Image
+
 class CocoTextDataset(Dataset):
     def __init__(self, images_dir: str, embeds_pt: str, size: int = 128):
         self.images_dir = Path(images_dir)
-        self.embeds: Dict[int, torch.Tensor] = torch.load(embeds_pt, weights_only=True)  # {image_id: [D]}
-        # COCO filename: 12 dígitos (p.ej. 000000123456.jpg)
+        # {image_id: 1D Tensor embedding}
+        try:
+            self.embeds: Dict[int, torch.Tensor] = torch.load(embeds_pt, map_location="cpu", weights_only=True)  # torch >= 2.4
+        except TypeError:
+            self.embeds = torch.load(embeds_pt, map_location="cpu")  # fallback
+
+        # Inferir dim del embedding (ej. 512 para CLIP ViT-B/32)
+        if len(self.embeds) > 0:
+            first_vec = next(iter(self.embeds.values()))
+            self.embed_dim = int(first_vec.numel())
+        else:
+            self.embed_dim = 512
+
+        # Listado de imágenes
         self.items: List[Path] = sorted(self.images_dir.glob("*.jpg"))
+
         # Transform
         self.tf = T.Compose([
             T.Resize(size, interpolation=T.InterpolationMode.BICUBIC),
@@ -59,25 +80,36 @@ class CocoTextDataset(Dataset):
             T.Lambda(lambda x: x*2.0 - 1.0)  # [-1,1]
         ])
 
-    def __len__(self): return len(self.items)
+    def __len__(self):
+        return len(self.items)
 
     def __getitem__(self, idx: int):
-        p = self.items[idx]
-        img = Image.open(p).convert("RGB")
-        x = self.tf(img)  # [3,H,W] in [-1,1]
+        path = self.items[idx]
+        img = Image.open(path).convert("RGB")
+        x = self.tf(img).to(torch.float32)  # [3,H,W] en [-1,1]
 
-        # Image id from filename: e.g., COCO_train2017_000000123456.jpg or 000000123456.jpg
-        stem = p.stem
-        # robust: keep last 12 digits
-        iid = int(stem[-12:])
+        # ID numérico: últimos 12 dígitos del nombre (p.ej. 000000123456.jpg)
+        image_id = int(path.stem[-12:])
 
-        y = self.embeds.get(iid, None)
+        # Embedding CLIP asociado al image_id (float32 1D)
+        y = self.embeds.get(int(image_id), None)
         if y is None:
-            # Fallback: vector cero si no hay caption (raro)
-            # Mejor: filtrar en preproceso; aquí devolvemos algo válido.
-            y = torch.zeros(next(iter(self.embeds.values())).shape)
+            y = torch.zeros(self.embed_dim, dtype=torch.float32)
+        else:
+            if not torch.is_floating_point(y):
+                y = y.float()
+            else:
+                y = y.to(torch.float32)
+            if y.ndim != 1:
+                y = y.view(-1)
 
-        return {"x": x, "y": y, "path": str(p), "image_id": iid}
+        return {
+            "x": x,                      # [C,H,W] float32
+            "y": y,                      # [D]     float32 (embedding CLIP)
+            "image_id": int(image_id),   # int
+            "filename": path.name,       # str
+        }
+
 
 
 

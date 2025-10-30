@@ -80,13 +80,17 @@ def sample_and_save(
     channels: int = 3,
     steps: int = 500,
     device: Optional[torch.device] = None,
-    y: Optional[torch.Tensor] = None,
+    cond_y: Optional[torch.Tensor] = None,   # ← ahora se espera embedding CLIP por muestra (opcional)
     grid_nrow: Optional[int] = None,
     batch_size: int = 64,   # por si quieres muestrear en lotes
 ) -> Path:
     """
     Genera 'num' imágenes integrando el ODE en dirección reverse (t: 1→0).
     Asume entrenamiento en [-1,1] y prior N(0,I) en t=1.
+
+    Parámetros:
+      - cond_y: si se provee, debe ser un tensor float de shape [num, D] (e.g. D=512 para CLIP),
+           que representa el embedding condicional por muestra. Si es None, sampling incondicional.
     """
     device = device or next(model.parameters()).device
     model.eval()
@@ -94,16 +98,19 @@ def sample_and_save(
     # Vector field ODE con el modelo aprendido
     ode = cvf.LearnedVectorFieldODE(model)
 
-    # Condición (unconditional por defecto)
-    if y is None:
-        y = torch.zeros(num, dtype=torch.long, device=device)
-    ode.y = y
+    # Condición (unconditional por defecto). Si y existe, lo pasamos por lote.
+    if cond_y is not None:
+        cond_y = cond_y.to(device, non_blocking=True)
+        # validación simple
+        assert cond_y.dim() == 2 and cond_y.shape[0] == num, \
+            f"Se esperaba y de shape [num, D], recibido {tuple(cond_y.shape)} con num={num}"
+        ode.y = cond_y
+    else:
+        ode.y = None  # incondicional
 
     simulator = sim.EulerSimulator(ode)
 
     # Estado inicial: prior en t=1
-    # OJO: el simulador asume que el primer tiempo en ts corresponde al estado inicial
-    # así que vamos a pasar ts decreciente (1→0) y x_init ~ N(0, I)
     ts = torch.linspace(0.0, 1.0, steps, device=device).view(1, -1, 1, 1, 1)
 
     out_png = Path(out_png)
@@ -117,8 +124,14 @@ def sample_and_save(
         b = min(batch_size, num - done)
         x0 = torch.randn(b, channels, size, size, device=device)  # t=1
         ts_b = ts[:, :, :, :, :].expand(b, -1, 1, 1, 1)
-        with torch.no_grad():
-            xT = simulator.simulate(x0, ts_b)
+
+        # Condición por batch (si aplica)
+        if cond_y is not None:
+            ode.y = cond_y[done:done + b]  # [b, D]
+        else:
+            ode.y = None
+
+        xT = simulator.simulate(x0, ts_b)
         imgs.append(xT)
         done += b
 
@@ -127,7 +140,6 @@ def sample_and_save(
     grid = make_grid(x_all, nrow=nrow, normalize=True, value_range=(-1, 1))
     save_image(grid, out_png)
     return out_png
-
 
 
 # src/tools/utils.py

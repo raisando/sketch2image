@@ -2,10 +2,13 @@ from pathlib import Path
 from typing import List, Dict, Optional
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
 import torchvision.transforms as T
 from PIL import Image
 from .datasets import CocoTextDataset, ImageDatasetSampler, RightHalfImages, FashionMNISTLoader, CIFAR10Loader, ClassFilteredDataset
 from src.tools.utils import random_split_dataset
+import numpy as np
+import random
 
 
 def make_loaders(data_root: str, size: int, batch_size: int, to_gray: bool = False, num_workers: int = 8):
@@ -89,7 +92,7 @@ def make_loaders_cifar10(
 
 
 def make_loaders_coco_text(
-    data_root   : str,               # e.g. "data/coco2017"
+    data_root   : str,               # e.g. "data/coco2017/images"
     split       : str = "train",     # "train" o "val"
     size        : int = 128,
     batch_size  : int = 64,
@@ -129,3 +132,64 @@ def make_loaders_coco_text(
             num_workers=num_workers, pin_memory=True, drop_last=False
         )
         return loader
+
+
+def seed_worker(worker_id):
+    # Semillas independientes por worker
+    worker_seed = (torch.initial_seed() + worker_id) % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+def make_loaders_coco_text_distributed(
+    data_root, size, batch_size, num_workers, val_ratio, embeds_pt, distributed=True
+):
+
+    embeds_train = embeds_pt + "train2017_5cls.pt"
+    embeds_val = embeds_pt + "val2017_5cls.pt"
+
+    train_ds = CocoTextDataset(f"{data_root}/train2017", embeds_pt=embeds_train, size=size)
+    val_ds   = CocoTextDataset(f"{data_root}/val2017",   embeds_pt=embeds_val, size=size)
+
+    if distributed and torch.distributed.is_initialized():
+        train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True)
+        val_sampler   = DistributedSampler(val_ds,   shuffle=True, drop_last=True)
+        shuffle_train = False
+        shuffle_val   = False
+    else:
+        train_sampler = None
+        val_sampler   = None
+        shuffle_train = True
+        shuffle_val   = False
+
+    g = torch.Generator()
+    g.manual_seed(42)
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=shuffle_train,
+        sampler=train_sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+        prefetch_factor=4 if num_workers > 0 else None,
+        persistent_workers=num_workers > 0,
+        drop_last=True,
+        worker_init_fn=seed_worker,
+        generator=g,
+    )
+
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=max(1, batch_size // 2),
+        shuffle=shuffle_val,
+        sampler=val_sampler,
+        num_workers=max(1, num_workers // 2),
+        pin_memory=True,
+        prefetch_factor=4 if num_workers > 0 else None,
+        persistent_workers=num_workers > 0,
+        drop_last=False,
+        worker_init_fn=seed_worker,
+        generator=g,
+    )
+
+    return train_loader, val_loader

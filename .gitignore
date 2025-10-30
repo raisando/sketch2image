@@ -10,6 +10,7 @@ __pycache__/
 *.pt
 *.csv
 e2s_fm/data/
+e2s_fm/runs/
 runs/
 *.ckpt
 *.jpg

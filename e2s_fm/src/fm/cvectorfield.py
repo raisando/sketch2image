@@ -35,17 +35,12 @@ class LearnedVectorFieldODE(sim.ODE):
     def __init__(self, net: nn.Module):
         super().__init__()
         self.net = net
-        # opcional: self.y = None
+        self.y = None  # opcional
 
     def drift_coefficient(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        # intenta usar self.y si fue seteado desde fuera
-        y = getattr(self, "y", None)
-        if y is None:
-            y = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
-        try:
-            return self.net(x, t, y)   # UNet condicional
-        except TypeError:
-            return self.net(x, t)
+        y = getattr(self, "y", None)   # deja None como None (no lo conviertas a Long)
+        return self.net(x, t, y)       # tu UNet siempre acepta y (puede ser None)
+
 
 class LangevinFlowSDE(sim.SDE):
     """

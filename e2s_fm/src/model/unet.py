@@ -309,15 +309,15 @@ class FMUNetCOCO(nn.Module):
         # --- Embeddings ---
         self.time_embedder = FourierEncoder(t_embed_dim)
         self.clip_dim = clip_dim
-        self.y_proj   = nn.Linear(self.clip_dim, y_embed_dim)                # CLIP -> y_embed
+        self.y_proj   = nn.Linear(self.clip_dim, y_embed_dim)# CLIP -> y_embed
 
-        # --- Backbone UNet ---
         self.init_conv = nn.Sequential(
             nn.Conv2d(in_channels, channels[0], kernel_size=3, padding=1),
             nn.BatchNorm2d(channels[0]),
             nn.SiLU()
         )
 
+        print(f"[DEBUG] FMUNetCOCO channels = {channels}")
         encoders, decoders = [], []
         for curr_c, next_c in zip(channels[:-1], channels[1:]):
             encoders.append(Encoder(curr_c, next_c, num_residual_layers, t_embed_dim, y_embed_dim))
@@ -331,11 +331,15 @@ class FMUNetCOCO(nn.Module):
     def _make_y_embed(self, y: torch.Tensor | None, B: int, device: torch.device) -> torch.Tensor:
         """
         Devuelve y_embed: [B, y_embed_dim]
-          - y Float [B, clip_dim] o [clip_dim]  -> y_proj
-          - y Long  [B] (IDs)                    -> y_embedder_ids
-          - y None                                -> ceros (uncond)
+        - y Float [B, clip_dim] o [clip_dim]  -> y_proj
+        - y None                               -> ceros (uncond)
+        (IDs Long NO soportados en FMUNetCOCO)
         """
-        # CLIP embeddings
+        # Unconditional
+        if y is None:
+            return torch.zeros(B, self.y_proj.out_features, device=device)
+
+        # CLIP embeddings (float)
         if y.dtype in (torch.float16, torch.float32, torch.float64):
             y = y.to(device)
             if y.ndim == 1:            # [clip_dim] -> [1, clip_dim] -> expand
@@ -346,7 +350,9 @@ class FMUNetCOCO(nn.Module):
                 raise ValueError(f"[FMUNetCOCO] y shape incompatible: {tuple(y.shape)} con batch={B}")
             return self.y_proj(y)
 
-        raise TypeError(f"[FMUNetCOCO] dtype de y no soportado: {y.dtype}")
+        raise TypeError("[FMUNetCOCO] Se esperaba y como embedding CLIP en float (ej. [B,512] o [512]). "
+                        f"Recibido dtype={y.dtype}. Revisa tu dataset para que entregue y en float32.")
+
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, y: torch.Tensor | None):
         """
@@ -354,9 +360,10 @@ class FMUNetCOCO(nn.Module):
         """
         B, device = x.size(0), x.device
 
-        t_embed = self.time_embedder(t)
-        if y is not None:
-            y = y.to(device=device, dtype=torch.long)  # [B, t_embed_dim]
+        t_embed = self.time_embedder(t) # [B, t_embed_dim]
+
+        if y is not None and y.dtype in (torch.float16, torch.float32, torch.float64):
+                y = y.to(device=device, dtype=torch.float32)
         y_embed = self._make_y_embed(y, B, device)      # [B, y_embed_dim]
 
 
