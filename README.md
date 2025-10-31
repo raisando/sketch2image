@@ -60,3 +60,10 @@ python -m  src.tools.filter_coco   --classes "person,car,dog,cat,bicycle"   --mo
 ## 4) Train
 torchrun --nproc_per_node=3 -m src.train --data_root data/coco2017_5cls --size 128 --epochs 100 --batch 16 --lr 1e-4 --num_workers 4 --out runs/fm_coco_filtered_s128_b16_e100
 
+## 5) Sample 
+python -m src.sample --ckpt runs/fm_coco_s128_b16_e100/model.pth --size 128 --channels 3 --num 16 --steps 750 --out runs/fm_coco_s128_b16_e100/samples_person.png --prompt person \
+python -m src.sample --ckpt runs/fm_coco_s128_b16_e100/model.pth --size 128 --channels 3 --num 16 --steps 750 --out runs/fm_coco_s128_b16_e100/samples_bicycle.png --prompt bicycle \
+python -m src.sample --ckpt runs/fm_coco_s128_b16_e100/model.pth --size 128 --channels 3 --num 16 --steps 750 --out runs/fm_coco_s128_b16_e100/samples_dog.png --prompt dog \
+
+## 6) Continued Training
+torchrun --nproc_per_node=3 -m src.train_contd --data_root data/coco2017_5cls --size 128 --epochs 100 --batch 16 --lr 1e-4 --num_workers 4 --out runs/fm_coco_filtered_s128_b16_e100 --ckpt_every 10 --val_every 10 --resume runs/fm_coco_filtered_s128_b16_e100/checkpoints/ckpt_e0100.pth
