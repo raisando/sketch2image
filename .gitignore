@@ -18,3 +18,4 @@ runs/
 *.png
 .DS_Store
 sketch_cond/data/coco2017/annotations/*.json
+sketch_cond/data/coco2017/annotations/
