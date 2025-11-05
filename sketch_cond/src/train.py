@@ -120,13 +120,14 @@ def main():
         if hasattr(getattr(train_loader, "sampler", None), "set_epoch"):
             getattr(train_loader, "sampler").set_epoch(global_epoch)
 
-        # Entrenar 'block' épocas más
         block_history = trainer.train(
             device=device,
             lr=args.lr,
-            epochs=block,
+            epochs=block,              # how many epochs to run *in this block*
             train_loader=train_loader,
             use_amp=False,
+            start_epoch=global_epoch,  # where we are globally
+            total_epochs=total_epochs, # so tqdm knows the final
         )
         # Acumular historial de entrenamiento (asumo devuelve {"train": [...]})
         if isinstance(block_history, dict) and "train" in block_history:
