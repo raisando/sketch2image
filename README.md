@@ -125,7 +125,9 @@ torchrun --nproc_per_node=3 -m src.train --data_root data/coco2017_5cls --size 1
 ```
 
 ## 5) Sample 
-python -m src.sample --ckpt runs/fm_coco_filtered_s128_b16_e100/model.pth --size 128 --channels 3 --num 16 --steps 750 --out runs/fm_coco_s128_b16_e100/samples_person.png --prompt person 
+```bash
+python -m src.sample --ckpt runs/fm_coco_filtered_s128_b16_e100/model.pth --size 128 --channels 3 --num 16 --steps 750 --out runs/fm_coco_s128_b16_e100/samples_person.png --prompt person
+```
 
 python -m src.sample --ckpt runs/fm_coco_filtered_s128_b16_e100/model.pth --size 128 --channels 3 --num 16 --steps 750 --out runs/fm_coco_s128_b16_e100/samples_bicycle.png --prompt bicycle 
 
